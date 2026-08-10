@@ -158,6 +158,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       validView(localStorage.getItem("navpilot_view_mode_v1")),
     ),
     [activeCategory, setActiveCategory] = useState("all"),
+    [activeTag, setActiveTag] = useState(""),
     [query, setQuery] = useState(""),
     [publicEditMode, setPublicEditMode] = useState(false),
     [personalEditMode, setPersonalEditMode] = useState(false),
@@ -179,9 +180,15 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     selection.identityKey === identityKey &&
     selection.space;
   useEffect(() => {
-    const launch = (event) => setAssistantRequest({ id:Date.now(), scope:event.detail?.scope || 'personal', text:event.detail?.text || '' });
-    window.addEventListener('navpilot:assistant-request', launch);
-    return () => window.removeEventListener('navpilot:assistant-request', launch);
+    const launch = (event) =>
+      setAssistantRequest({
+        id: Date.now(),
+        scope: event.detail?.scope || "personal",
+        text: event.detail?.text || "",
+      });
+    window.addEventListener("navpilot:assistant-request", launch);
+    return () =>
+      window.removeEventListener("navpilot:assistant-request", launch);
   }, []);
   const space = spaceReady ? selection.space : null;
   useEffect(() => {
@@ -189,6 +196,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     generation.current += 1;
     setSnapshot({ key: null, status: "idle", categories: [], items: [] });
     setActiveCategory("all");
+    setActiveTag("");
     setQuery("");
     setPublicEditMode(false);
     setPersonalEditMode(false);
@@ -262,16 +270,32 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       all: items.length,
     };
   }, [categories, items]);
+  const allTags = useMemo(
+    () =>
+      [
+        ...new Set(
+          items.flatMap((item) => (Array.isArray(item.tags) ? item.tags : [])),
+        ),
+      ].sort((a, b) => a.localeCompare(b)),
+    [items],
+  );
   const filtered = useMemo(
     () =>
-      filterByCategory(items, categories, activeCategory).filter(
-        (item) =>
+      filterByCategory(items, categories, activeCategory).filter((item) => {
+        const tags = Array.isArray(item.tags) ? item.tags : [];
+        const tagMatch =
+          !activeTag ||
+          tags.some(
+            (tag) => tag.toLocaleLowerCase() === activeTag.toLocaleLowerCase(),
+          );
+        const textMatch =
           !query.trim() ||
-          `${item.name} ${item.url} ${item.description}`
+          `${item.name} ${item.url} ${item.description} ${tags.join(" ")}`
             .toLowerCase()
-            .includes(query.trim().toLowerCase()),
-      ),
-    [items, categories, activeCategory, query],
+            .includes(query.trim().toLowerCase());
+        return tagMatch && textMatch;
+      }),
+    [items, categories, activeCategory, activeTag, query],
   );
   const grouped = useMemo(() => {
     const map = new Map();
@@ -314,6 +338,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     setSelection({ identityKey, space: next });
     setSnapshot({ key: null, status: "idle", categories: [], items: [] });
     setActiveCategory("all");
+    setActiveTag("");
     setQuery("");
   }
   async function saveItem(form) {
@@ -648,6 +673,29 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
         )}
         <ViewModeSwitcher value={viewMode} onChange={setViewMode} />
       </div>
+      {allTags.length > 0 && (
+        <div className="tag-filter-bar">
+          <span>
+            <Icon name="tag" size={14} />
+            {auth.user?.preferences?.locale === "en" ? "Tags" : "标签"}
+          </span>
+          <button
+            className={!activeTag ? "active" : ""}
+            onClick={() => setActiveTag("")}
+          >
+            {auth.user?.preferences?.locale === "en" ? "All" : "全部"}
+          </button>
+          {allTags.map((tag) => (
+            <button
+              key={tag}
+              className={activeTag === tag ? "active" : ""}
+              onClick={() => setActiveTag(tag)}
+            >
+              #{tag}
+            </button>
+          ))}
+        </div>
+      )}
       {error && <div className="error-text portal-error">{error}</div>}
       <div className="main-layout">
         <CategoryNav

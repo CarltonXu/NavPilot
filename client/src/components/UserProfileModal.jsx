@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useAuth } from "../auth/AuthContext.jsx";
 import { useI18n } from "../i18n/LocaleContext.jsx";
 import Icon from "./Icon.jsx";
@@ -165,7 +166,7 @@ export default function UserProfileModal({ onClose }) {
     preferences: c.preferencesDesc,
     security: c.securityDesc,
   };
-  return (
+  return createPortal(
     <div
       className="modal-mask profile-mask"
       onMouseDown={(event) =>
@@ -423,6 +424,7 @@ export default function UserProfileModal({ onClose }) {
           </button>
         </footer>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -63,6 +63,13 @@ const words = {
     chromeInstall: "请先下载并安装 NavPilot Chrome 扩展，然后刷新本页面。",
     back: "重新选择导入类型",
     chooseDirectory: "请至少选择一个目录",
+    sharedAt: "共享时间",
+    respondedAt: "处理时间",
+    viewDetail: "查看详情",
+    detailTitle: "共享详情",
+    sharedResources: "共享资源明细",
+    sharedCategories: "共享目录结构",
+    noCategory: "未分类",
   },
   en: {
     title: "My Space tools",
@@ -121,13 +128,21 @@ const words = {
       "Open chrome://extensions and enable Developer mode",
       "Choose Load unpacked, select the unzipped folder, then refresh this page",
     ],
-    installedHint: "Already installed and refreshed? You can now read your browser bookmarks.",
+    installedHint:
+      "Already installed and refreshed? You can now read your browser bookmarks.",
     chromeUnavailable:
       "The NavPilot bookmarks extension was not detected. Browser security prevents a normal website from reading bookmarks directly.",
     chromeInstall:
       "Download and install the NavPilot Chrome extension, then refresh this page.",
     back: "Choose another import type",
     chooseDirectory: "Select at least one folder",
+    sharedAt: "Shared",
+    respondedAt: "Responded",
+    viewDetail: "View details",
+    detailTitle: "Sharing details",
+    sharedResources: "Shared resources",
+    sharedCategories: "Shared folders",
+    noCategory: "Uncategorized",
   },
 };
 
@@ -213,6 +228,127 @@ function requestChromeBookmarks() {
   });
 }
 
+function importCategoryPath(preview, key) {
+  const byKey = new Map(
+      (preview?.categories || []).map((row) => [row.key, row]),
+    ),
+    names = [],
+    seen = new Set();
+  let current = key;
+  while (current && byKey.has(current) && !seen.has(current)) {
+    seen.add(current);
+    const row = byKey.get(current);
+    names.unshift(row.name);
+    current = row.parentKey;
+  }
+  return names.join(" / ");
+}
+
+function ShareDetail({ share, words: w, locale, onClose }) {
+  const categories = new Map(
+    (share.snapshot?.categories || []).map((row) => [row.key, row]),
+  );
+  function categoryPath(key) {
+    const names = [],
+      seen = new Set();
+    let current = key;
+    while (current && categories.has(current) && !seen.has(current)) {
+      seen.add(current);
+      const row = categories.get(current);
+      names.unshift(row.name);
+      current = row.parentKey;
+    }
+    return names.join(" / ") || w.noCategory;
+  }
+  const format = (value) =>
+    value
+      ? new Intl.DateTimeFormat(locale, {
+          dateStyle: "medium",
+          timeStyle: "medium",
+        }).format(new Date(value))
+      : "—";
+  return (
+    <div
+      className="share-detail-backdrop"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
+      <section
+        className="share-detail-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="share-detail-title"
+      >
+        <header>
+          <div>
+            <span className={`share-status ${share.status}`}>
+              {w[share.status]}
+            </span>
+            <h3 id="share-detail-title">{w.detailTitle}</h3>
+            <p>
+              {share.sender.displayName} → {share.recipient.displayName}
+            </p>
+          </div>
+          <button className="mini-btn" onClick={onClose}>
+            <Icon name="close" size={15} />
+          </button>
+        </header>
+        <div className="share-detail-meta">
+          <div>
+            <span>{w.sharedAt}</span>
+            <strong>{format(share.createdAt)}</strong>
+          </div>
+          <div>
+            <span>{w.respondedAt}</span>
+            <strong>{format(share.respondedAt)}</strong>
+          </div>
+          <div>
+            <span>{w.categories}</span>
+            <strong>{share.summary.categories}</strong>
+          </div>
+          <div>
+            <span>{w.items}</span>
+            <strong>{share.summary.items}</strong>
+          </div>
+        </div>
+        <div className="share-detail-body">
+          {(share.snapshot?.categories || []).length > 0 && (
+            <>
+              <h4>{w.sharedCategories}</h4>
+              <div className="share-category-list">
+                {share.snapshot.categories.map((category) => (
+                  <span key={category.key}>
+                    <Icon name="folder" size={12} />
+                    {categoryPath(category.key)}
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
+          <h4>{w.sharedResources}</h4>
+          {(share.snapshot?.items || []).map((item) => (
+            <article key={item.key}>
+              <span>
+                <Icon name="link" size={16} />
+              </span>
+              <div>
+                <strong>{item.name}</strong>
+                <small>{item.url}</small>
+                <p>{item.description || "—"}</p>
+                <div className="share-resource-tags">
+                  {(item.tags || []).map((tag) => (
+                    <i key={tag}>#{tag}</i>
+                  ))}
+                </div>
+              </div>
+              <em>{categoryPath(item.categoryKey)}</em>
+            </article>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function PersonalToolsModal({
   categories,
   selectedIds = [],
@@ -236,6 +372,7 @@ export default function PersonalToolsModal({
   const [categoryIds, setCategoryIds] = useState(initialCategories);
   const [recipients, setRecipients] = useState("");
   const [shares, setShares] = useState({ sent: [], received: [] });
+  const [shareDetail, setShareDetail] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -304,6 +441,17 @@ export default function PersonalToolsModal({
       });
       await loadShares();
       if (action === "accept") onChanged?.();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function openShareDetail(share) {
+    setLoading(true);
+    setError("");
+    try {
+      setShareDetail(await api.getShare(share.id));
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -509,6 +657,12 @@ export default function PersonalToolsModal({
             <span>
               <strong>{item.name}</strong>
               <small>{item.url}</small>
+              {importCategoryPath(preview, item.categoryKey) && (
+                <em>
+                  <Icon name="folder" size={11} />
+                  {importCategoryPath(preview, item.categoryKey)}
+                </em>
+              )}
             </span>
             {item.duplicate && <i>{w.duplicates}</i>}
           </label>
@@ -636,6 +790,22 @@ export default function PersonalToolsModal({
                           {share.summary.items} {w.items} ·{" "}
                           {share.summary.categories} {w.categories}
                         </p>
+                        <time>
+                          {w.sharedAt} ·{" "}
+                          {new Date(share.createdAt).toLocaleString(locale)}
+                        </time>
+                        {share.respondedAt && (
+                          <time>
+                            {w.respondedAt} ·{" "}
+                            {new Date(share.respondedAt).toLocaleString(locale)}
+                          </time>
+                        )}
+                        <button
+                          className="share-detail-link"
+                          onClick={() => openShareDetail(share)}
+                        >
+                          {w.viewDetail}
+                        </button>
                       </div>
                       {share.status === "pending" && (
                         <div className="share-response">
@@ -695,6 +865,22 @@ export default function PersonalToolsModal({
                           {share.summary.items} {w.items} ·{" "}
                           {share.summary.categories} {w.categories}
                         </p>
+                        <time>
+                          {w.sharedAt} ·{" "}
+                          {new Date(share.createdAt).toLocaleString(locale)}
+                        </time>
+                        {share.respondedAt && (
+                          <time>
+                            {w.respondedAt} ·{" "}
+                            {new Date(share.respondedAt).toLocaleString(locale)}
+                          </time>
+                        )}
+                        <button
+                          className="share-detail-link"
+                          onClick={() => openShareDetail(share)}
+                        >
+                          {w.viewDetail}
+                        </button>
                       </div>
                     </article>
                   ))
@@ -820,6 +1006,14 @@ export default function PersonalToolsModal({
           {message && <div className="settings-saved">{message}</div>}
         </main>
       </div>
+      {shareDetail && (
+        <ShareDetail
+          share={shareDetail}
+          words={w}
+          locale={locale}
+          onClose={() => setShareDetail(null)}
+        />
+      )}
     </div>
   );
 }

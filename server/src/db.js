@@ -64,6 +64,7 @@ function createLatestSchema(db) {
       url TEXT NOT NULL,
       icon TEXT NOT NULL DEFAULT 'icon:link',
       description TEXT NOT NULL DEFAULT '',
+      tags_json TEXT NOT NULL DEFAULT '[]',
       category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
       sort_order INTEGER NOT NULL DEFAULT 0,
       click_count INTEGER NOT NULL DEFAULT 0,
@@ -337,6 +338,12 @@ function migrateCurrentSchema(db) {
         WHERE item_id IS NOT NULL AND item_name IS NULL;
       `);
       db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(5)').run();
+    })();
+  }
+  if (!applied.has(6)) {
+    db.transaction(() => {
+      addColumnIfMissing(db, 'items', "tags_json TEXT NOT NULL DEFAULT '[]'");
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(6)').run();
     })();
   }
 }

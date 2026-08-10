@@ -2,6 +2,7 @@ import React from 'react';
 
 const paths = {
   search: <><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></>,
+  tag: <><path d="M3 5v6l9 9 8-8-9-9H5a2 2 0 0 0-2 2Z"/><circle cx="8" cy="8" r="1.3"/></>,
   assistant: <><path d="M12 3 14 9l6 2-6 2-2 6-2-6-6-2 6-2 2-6Z" /><path d="m18 3 .7 2.3L21 6l-2.3.7L18 9l-.7-2.3L15 6l2.3-.7L18 3Z" /></>,
   grid: <><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></>,
   dense: <><rect x="3" y="5" width="5" height="5" rx="1" /><rect x="10" y="5" width="5" height="5" rx="1" /><rect x="17" y="5" width="4" height="5" rx="1" /><rect x="3" y="14" width="5" height="5" rx="1" /><rect x="10" y="14" width="5" height="5" rx="1" /><rect x="17" y="14" width="4" height="5" rx="1" /></>,
