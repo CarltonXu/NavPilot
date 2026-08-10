@@ -155,7 +155,7 @@ function normalizeNavpilot(payload) {
         .trim()
         .slice(0, 120),
       url: validUrl(row.url),
-      icon: String(row.icon || "icon:link").slice(0, 80),
+      icon: String(row.icon || "icon:link").slice(0, 500),
       description: String(row.description || "").slice(0, 500),
       tags: tags(row.tags),
       categoryKey:

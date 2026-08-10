@@ -440,7 +440,7 @@ function createNavigationService(db = defaultDb) {
         .run(
           name,
           normalizeUrl(input.url),
-          String(input.icon || "icon:link").slice(0, 80),
+          String(input.icon || "icon:link").slice(0, 500),
           String(input.description || "").slice(0, 500),
           JSON.stringify(normalizeTags(input.tags)),
           categoryId,
@@ -480,7 +480,7 @@ function createNavigationService(db = defaultDb) {
     ).run(
       String(patch.name ?? beforeValue.name).trim(),
       normalizeUrl(patch.url ?? beforeValue.url),
-      String(patch.icon ?? beforeValue.icon).slice(0, 80),
+      String(patch.icon ?? beforeValue.icon).slice(0, 500),
       String(patch.description ?? beforeValue.description).slice(0, 500),
       JSON.stringify(
         patch.tags === undefined ? beforeValue.tags : normalizeTags(patch.tags),

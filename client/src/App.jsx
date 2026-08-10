@@ -755,6 +755,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
         <ItemFormModal
           item={editingItem}
           categories={categories}
+          scope={space}
           onClose={() => setEditingItem(null)}
           onSubmit={saveItem}
           onDelete={() => deleteItem(editingItem)}

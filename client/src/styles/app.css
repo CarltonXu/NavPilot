@@ -1,4 +1,6 @@
 .app {
+  --portal-workspace-max: 1920px;
+  --category-nav-width: 232px;
   min-height: 100%;
   display: flex;
   flex-direction: column;
@@ -65,6 +67,7 @@
 .trend-tooltip i.growth { background: var(--online); }.trend-tooltip i.resources { background: var(--unknown); }.trend-tooltip i.ai { background: var(--offline); }
 
 @media (min-width: 1450px) {
+  .app { --category-nav-width: 260px; }
   .analytics-kpi-grid { grid-template-columns: repeat(8,minmax(0,1fr)); }
   .analytics-grid-expanded { grid-template-columns: repeat(3,minmax(0,1fr)); }
   .analytics-trend-card { grid-column: span 2; }.top-resources-card { grid-column: span 1; }.region-card { grid-column: span 2; }
@@ -240,12 +243,12 @@
   display: flex;
   align-items: flex-start;
   gap: 0;
-  max-width: 1320px;
+  max-width: var(--portal-workspace-max);
   margin: 0 auto;
   width: 100%;
 }
 .category-nav {
-  width: 232px;
+  width: var(--category-nav-width);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -310,8 +313,9 @@
 .category-add-trigger>span { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; background: var(--accent); color: #fff; }
 .category-tree-child-editor { padding-left: calc(var(--tree-depth) * 10px + 22px); }
 .category-inline-create { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
-.category-inline-fields { display: flex; gap: 4px; }
-.category-inline-fields input { min-width: 0; flex: 1; }
+.category-inline-fields { display: grid; grid-template-columns: minmax(0,1fr); gap: 6px; }
+.category-inline-fields input { width: 100%; min-width: 0; }
+.category-inline-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .category-inline-rename { margin-bottom: 4px; }
 .category-create-modal { max-width: 430px; overflow: visible; }
 .category-create-heading { display: grid; grid-template-columns: 42px minmax(0,1fr) 30px; align-items: start; gap: 11px; margin-bottom: 20px; }
@@ -354,7 +358,10 @@
 .item-actions { position: absolute; top: 10px; right: 10px; display: flex; gap: 4px; z-index: 3; }
 .ui-icon { display: inline-block; flex-shrink: 0; }
 .legacy-icon { line-height: 1; }
-.content-toolbar { max-width: 1320px; width: 100%; margin: 0 auto; padding: 14px 28px 0 260px; display: flex; align-items: center; justify-content: space-between; color: var(--text-tertiary); font-family: var(--font-mono); font-size: 12px; }
+.remote-content-icon { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; overflow: hidden; border-radius: 4px; line-height: 1; }
+.remote-content-icon img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.remote-content-icon>span { font-size: .85em; }
+.content-toolbar { max-width: var(--portal-workspace-max); width: 100%; margin: 0 auto; padding: 14px 28px 0 calc(var(--category-nav-width) + 28px); display: flex; align-items: center; justify-content: space-between; color: var(--text-tertiary); font-family: var(--font-mono); font-size: 12px; }
 .content-toolbar.editing { gap: 14px; }
 .batch-move-bar { min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
 .batch-move-bar>span { color: var(--accent); }
@@ -600,6 +607,13 @@
   transition: border-color var(--transition);
 }
 .form-row input:focus, .form-row select:focus, .form-row textarea:focus { border-color: var(--accent); }
+.item-url-control { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: stretch; gap: 8px; }
+.item-url-control input { width: 100%; min-width: 0; }
+.item-url-control .icon-btn { min-width: 132px; justify-content: center; white-space: nowrap; }
+.item-icon-control { display: grid; grid-template-columns: 38px minmax(0,1fr); align-items: center; gap: 7px; }
+.item-icon-control>span { width: 38px; height: 36px; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
+.item-icon-control input { width: 100%; min-width: 0; }
+.item-metadata-hint.success { color: var(--online); }
 .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .hint { font-size: 11.5px; color: var(--text-tertiary); margin-top: 4px; font-family: var(--font-mono); }
@@ -713,7 +727,7 @@ table.admin-table td.desc-cell { white-space: normal; max-width: 220px; color: v
 }
 
 .modal-mask.profile-mask { z-index: 240; display: flex; align-items: center; justify-content: center; inset: 0; width: 100vw; height: 100dvh; }
-.tag-filter-bar { width: 100%; max-width: 1320px; margin: 0 auto; padding: 9px 28px 0 260px; display: flex; align-items: center; gap: 6px; overflow-x: auto; scrollbar-width: thin; }
+.tag-filter-bar { width: 100%; max-width: var(--portal-workspace-max); margin: 0 auto; padding: 9px 28px 0 calc(var(--category-nav-width) + 28px); display: flex; align-items: center; gap: 6px; overflow-x: auto; scrollbar-width: thin; }
 .tag-filter-bar>span { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; margin-right: 2px; color: var(--text-tertiary); font-size: 10px; }
 .tag-filter-bar button { flex: 0 0 auto; padding: 4px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--text-secondary); font: 9.5px var(--font-mono); cursor: pointer; }
 .tag-filter-bar button:hover,.tag-filter-bar button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
@@ -736,7 +750,7 @@ table.admin-table td.desc-cell { white-space: normal; max-width: 220px; color: v
   gap: 16px;
   padding: 12px 28px;
   border-bottom: 1px solid var(--border);
-  max-width: 1320px;
+  max-width: var(--portal-workspace-max);
   margin: 0 auto;
   width: 100%;
 }
@@ -1332,6 +1346,8 @@ table.admin-table td.desc-cell { white-space: normal; max-width: 220px; color: v
   .analytics-kpi-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 @media (max-width: 760px) {
+  .item-url-control { grid-template-columns: 1fr; }
+  .item-url-control .icon-btn { width: 100%; }
   .profile-modal { width: calc(100vw - 8px); max-height: calc(100dvh - 8px); }
   .personal-tools-modal { width: calc(100vw - 16px); }
   .analytics-grid-expanded { grid-template-columns: 1fr; }

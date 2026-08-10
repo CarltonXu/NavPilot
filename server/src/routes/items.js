@@ -4,13 +4,15 @@ const {checkAndPersist,checkItems}=require('../services/healthCheck');
 const {requireUser,requireAdmin,requirePasswordChanged}=require('../middleware/auth');
 const {auditWith,analytics}=require('../services/eventService');
 const {createNavigationService,realm}=require('../services/navigationService');
-const router=express.Router();const navigation=createNavigationService(db);
+const {createUrlMetadataService}=require('../services/urlMetadataService');
+const router=express.Router();const navigation=createNavigationService(db),urlMetadata=createUrlMetadataService();
 function authorizeScope(req,res,scope,next){if(scope==='public')return requireAdmin(req,res,()=>requirePasswordChanged(req,res,next));if(scope==='personal')return requireUser(req,res,()=>requirePasswordChanged(req,res,next));return res.status(400).json({code:'INVALID_SCOPE',error:'无效空间范围'});}
 function currentRealm(req,scope){return realm(scope,scope==='personal'?req.auth.user.id:null);}
 function sendError(res,error,fallback){return res.status(error.status||500).json({code:error.code||fallback,error:error.status?error.message:'操作失败'});}
 function visibleItem(req,id){const item=db.prepare('SELECT * FROM items WHERE id=?').get(id);if(!item||item.scope==='personal'&&req.auth?.user?.id!==item.owner_id)return null;return item;}
 function loadAndAuthorize(req,res,next){const item=db.prepare('SELECT * FROM items WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({code:'ITEM_NOT_FOUND',error:'条目不存在'});req.item=item;return authorizeScope(req,res,item.scope,()=>{if(item.scope==='personal'&&item.owner_id!==req.auth.user.id)return res.status(404).json({code:'ITEM_NOT_FOUND',error:'条目不存在'});next();});}
 router.get('/',(req,res)=>{const scope=req.query.scope||'public';if(scope==='personal'&&!req.auth?.user)return res.status(401).json({code:'AUTH_REQUIRED',error:'请先登录'});try{return res.json(navigation.listItems(currentRealm(req,scope)));}catch(error){return sendError(res,error,'ITEM_LIST_FAILED');}});
+router.post('/metadata',(req,res)=>authorizeScope(req,res,req.body.scope,async()=>{try{return res.json(await urlMetadata.fetchPage(req.body.url,{allowPrivate:req.auth.user.role==='admin'}));}catch(error){return sendError(res,error,'URL_METADATA_FAILED');}}));
 router.post('/',(req,res)=>authorizeScope(req,res,req.body.scope,()=>{try{const current=currentRealm(req,req.body.scope);const result=db.transaction(()=>{const value=navigation.createItem(current,req.body);auditWith(db,req,'item.created',{targetType:'item',targetId:value.value.id,metadata:{scope:current.scope,after:value.after}});return value;})();res.status(201).json(result.value);if(result.value.check_enabled)checkAndPersist(result.value).catch(()=>{});}catch(error){return sendError(res,error,'ITEM_CREATE_FAILED');}}));
 function update(req,res){try{const current=currentRealm(req,req.item.scope);const result=db.transaction(()=>{const value=navigation.updateItem(current,req.item.id,req.body);auditWith(db,req,value.moved?'item.moved':'item.updated',{targetType:'item',targetId:req.item.id,metadata:{scope:current.scope,changedFields:value.changedFields,before:value.before,after:value.after}});return value;})();return res.json(result.value);}catch(error){return sendError(res,error,'INVALID_ITEM_UPDATE');}}
 router.patch('/:id',loadAndAuthorize,update);router.put('/:id',loadAndAuthorize,update);

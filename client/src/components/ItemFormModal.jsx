@@ -1,5 +1,7 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
+import { api } from "../api.js";
 import { useI18n } from "../i18n/LocaleContext.jsx";
+import Icon, { ContentIcon } from "./Icon.jsx";
 
 import { flattenCategoryTree } from "../utils/categoryTree.js";
 
@@ -26,6 +28,7 @@ export default function ItemFormModal({
   onClose,
   onSubmit,
   onDelete,
+  scope = item?.scope || "public",
 }) {
   const { t, errorMessage, locale } = useI18n();
   const isEdit = Boolean(item && item.id);
@@ -42,8 +45,70 @@ export default function ItemFormModal({
   });
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [metadataLoading, setMetadataLoading] = useState(false);
+  const [metadataMessage, setMetadataMessage] = useState("");
+  const dirtyFields = useRef(new Set());
+  const activeInspection = useRef(null);
+  const lastInspectedUrl = useRef("");
+  const metadataWords =
+    locale === "en"
+      ? {
+          button: "Identify site",
+          loading: "Identifying…",
+          success: "Site name, description and icon were identified.",
+          hint: "Enter a reachable URL to identify site information automatically.",
+        }
+      : {
+          button: "识别网站信息",
+          loading: "正在识别…",
+          success: "已获取网站名称、描述和图标。",
+          hint: "输入可访问的网址后，可自动获取网站名称、描述和图标。",
+        };
   const update = (key, value) =>
     setForm((current) => ({ ...current, [key]: value }));
+  function userUpdate(key, value) {
+    dirtyFields.current.add(key);
+    if (key === "url") setMetadataMessage("");
+    update(key, value);
+  }
+  async function inspectMetadata(force = false) {
+    const url = form.url.trim();
+    if (!url || activeInspection.current) return;
+    if (!force && (isEdit || lastInspectedUrl.current === url)) return;
+    setMetadataLoading(true);
+    setMetadataMessage("");
+    setError("");
+    const inspection = api.inspectItemUrl(scope, url);
+    activeInspection.current = inspection;
+    try {
+      const metadata = await inspection;
+      lastInspectedUrl.current = url;
+      setForm((current) => ({
+        ...current,
+        url: metadata.url || current.url,
+        name:
+          metadata.name && (force || !dirtyFields.current.has("name"))
+            ? metadata.name
+            : current.name,
+        description:
+          metadata.description &&
+          (force || !dirtyFields.current.has("description"))
+            ? metadata.description
+            : current.description,
+        icon:
+          metadata.icon && (force || !dirtyFields.current.has("icon"))
+            ? metadata.icon
+            : current.icon,
+      }));
+      setMetadataMessage(metadataWords.success);
+    } catch (err) {
+      setMetadataMessage("");
+      if (force) setError(errorMessage(err));
+    } finally {
+      activeInspection.current = null;
+      setMetadataLoading(false);
+    }
+  }
   async function submit(event) {
     event.preventDefault();
     if (!form.name.trim() || !form.url.trim()) {
@@ -84,26 +149,49 @@ export default function ItemFormModal({
               <label>{t("item.name")}</label>
               <input
                 value={form.name}
-                onChange={(e) => update("name", e.target.value)}
+                onChange={(e) => userUpdate("name", e.target.value)}
                 placeholder={t("item.namePlaceholder")}
               />
             </div>
             <div className="form-row">
               <label>{t("item.icon")}</label>
-              <input
-                value={form.icon}
-                onChange={(e) => update("icon", e.target.value)}
-                placeholder="🔗"
-              />
+              <div className="item-icon-control">
+                <span>
+                  <ContentIcon value={form.icon} size={20} />
+                </span>
+                <input
+                  value={form.icon}
+                  onChange={(e) => userUpdate("icon", e.target.value)}
+                  placeholder="🔗"
+                />
+              </div>
             </div>
           </div>
           <div className="form-row">
             <label>{t("item.url")}</label>
-            <input
-              value={form.url}
-              onChange={(e) => update("url", e.target.value)}
-              placeholder="https://"
-            />
+            <div className="item-url-control">
+              <input
+                value={form.url}
+                onChange={(e) => userUpdate("url", e.target.value)}
+                onBlur={() => inspectMetadata(false)}
+                placeholder="https://"
+              />
+              <button
+                type="button"
+                className="icon-btn"
+                disabled={metadataLoading || !form.url.trim()}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => inspectMetadata(true)}
+              >
+                <Icon name={metadataLoading ? "refresh" : "globe"} size={15} />
+                {metadataLoading ? metadataWords.loading : metadataWords.button}
+              </button>
+            </div>
+            <div
+              className={`hint item-metadata-hint ${metadataMessage ? "success" : ""}`}
+            >
+              {metadataMessage || metadataWords.hint}
+            </div>
           </div>
           <div className="form-row">
             <label>{t("item.quickIcon")}</label>
@@ -114,7 +202,7 @@ export default function ItemFormModal({
                   key={icon}
                   className="mini-btn"
                   style={{ width: 30, height: 30, fontSize: 15 }}
-                  onClick={() => update("icon", icon)}
+                  onClick={() => userUpdate("icon", icon)}
                 >
                   {icon}
                 </button>
@@ -126,7 +214,7 @@ export default function ItemFormModal({
             <textarea
               rows={2}
               value={form.description}
-              onChange={(e) => update("description", e.target.value)}
+              onChange={(e) => userUpdate("description", e.target.value)}
               placeholder={t("item.descriptionPlaceholder")}
             />
           </div>

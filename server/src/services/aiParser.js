@@ -149,7 +149,7 @@ function persistItems(items, opts = {}) {
         insertItem.run(
           name,
           parsed.toString(),
-          String(raw.icon || "icon:link").slice(0, 80),
+          String(raw.icon || "icon:link").slice(0, 500),
           String(raw.description || "").slice(0, 500),
           JSON.stringify(tags),
           categoryId,
