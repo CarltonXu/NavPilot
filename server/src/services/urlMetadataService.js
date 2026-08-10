@@ -106,14 +106,18 @@ async function resolvePublicAddresses(
 }
 
 function pinnedLookup(records) {
-  let cursor = 0;
+  // Node 20+ may enable autoSelectFamily and ask custom lookups for every
+  // address.  Returning a mixed IPv4/IPv6 set caused losing connection
+  // attempts to emit a late, unhandled TLSSocket error after Axios had
+  // already rejected the request. Pin one verified address instead, with
+  // IPv4 preferred because many private deployments do not route IPv6.
+  const record = records.find((value) => Number(value.family) === 4) || records[0];
   return (_hostname, options, callback) => {
     if (typeof options === "function") {
       callback = options;
       options = {};
     }
-    if (options?.all) return callback(null, records);
-    const record = records[cursor++ % records.length];
+    if (options?.all) return callback(null, [record]);
     return callback(null, record.address, record.family);
   };
 }
@@ -217,7 +221,14 @@ function createUrlMetadataService({
         lookup,
         allowPrivate,
       );
-      const agentOptions = { keepAlive: false, lookup: pinnedLookup(records) };
+      const pinnedRecord =
+        records.find((value) => Number(value.family) === 4) || records[0];
+      const agentOptions = {
+        keepAlive: false,
+        lookup: pinnedLookup([pinnedRecord]),
+        family: Number(pinnedRecord.family),
+        autoSelectFamily: false,
+      };
       let response;
       try {
         response = await request.get(current.href, {

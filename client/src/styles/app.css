@@ -374,6 +374,11 @@
 .batch-delete-btn:hover { color: var(--offline); border-color: var(--offline); background: var(--offline-soft); }
 .batch-identify-btn { color: var(--accent); border-color: color-mix(in srgb,var(--accent) 42%,var(--border)); }
 .batch-identify-btn:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.batch-identify-spinner { animation: batch-identify-spin .9s linear infinite; }
+.batch-identify-progress { display: inline-flex; align-items: center; gap: 7px; min-width: 190px; color: var(--text-secondary); white-space: nowrap; }
+.batch-progress-track { width: 72px; height: 5px; overflow: hidden; border-radius: 99px; background: var(--border); }
+.batch-progress-track>span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .2s ease; }
+@keyframes batch-identify-spin { to { transform: rotate(360deg); } }
 .category-tree-row.drop-target .category-tree-select,.category-nav>button.drop-target { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
 .view-switch { display: inline-flex; padding: 3px; border: 1px solid var(--border); background: var(--bg-elevated); border-radius: var(--radius-md); }
 .view-switch button { display: flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--text-tertiary); border-radius: 6px; padding: 6px 9px; cursor: pointer; }

@@ -54,12 +54,30 @@ test("URL metadata validation blocks local and private network targets", () => {
 test("URL metadata service pins public DNS results and returns page metadata", async () => {
   let requestedUrl = "";
   const service = createUrlMetadataService({
-    lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+    lookup: async () => [
+      { address: "2606:2800:220:1:248:1893:25c8:1946", family: 6 },
+      { address: "93.184.216.34", family: 4 },
+    ],
     request: {
       get: async (url, options) => {
         requestedUrl = url;
         assert.equal(options.maxRedirects, 0);
         assert.equal(options.proxy, false);
+        assert.equal(options.httpsAgent.options.family, 4);
+        assert.equal(options.httpsAgent.options.autoSelectFamily, false);
+        await new Promise((resolve, reject) =>
+          options.httpsAgent.options.lookup(
+            "example.com",
+            { all: true },
+            (error, records) => {
+              if (error) return reject(error);
+              assert.deepEqual(records, [
+                { address: "93.184.216.34", family: 4 },
+              ]);
+              resolve();
+            },
+          ),
+        );
         return {
           status: 200,
           headers: { "content-type": "text/html; charset=utf-8" },

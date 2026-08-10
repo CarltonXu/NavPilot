@@ -28,12 +28,12 @@ async function bulkMetadata(req,res){
       }
     }
     await Promise.all(Array.from({length:Math.min(12,items.length)},worker));
-    const successful=results.filter(result=>result.metadata),failures=results.filter(result=>result.error);
-    const updates=db.transaction(()=>{
-      const values=successful.map(({item,metadata})=>navigation.updateItem(current,item.id,{name:metadata.name||item.name,description:metadata.description||item.description,icon:metadata.icon||item.icon,expectedVersion:item.version}));
-      auditWith(db,req,'item.bulk_metadata_updated',{targetType:'items',metadata:{scope:current.scope,requestedCount:items.length,updatedCount:values.length,failedCount:failures.length,affectedIds:values.map(value=>value.value.id),changes:values.map(value=>({id:value.value.id,before:value.before,after:value.after,changedFields:value.changedFields})),failures:failures.map(({item,error})=>({id:item.id,name:item.name,code:error.code||'URL_METADATA_FAILED'}))}});
-      return values;
-    })();
+    const successful=results.filter(result=>result.metadata),failures=results.filter(result=>result.error),updates=[];
+    for(const {item,metadata} of successful){
+      try{updates.push(db.transaction(()=>navigation.updateItem(current,item.id,{name:metadata.name||item.name,description:metadata.description||item.description,icon:metadata.icon||item.icon,expectedVersion:item.version}))());}
+      catch(error){failures.push({item,error});}
+    }
+    db.transaction(()=>auditWith(db,req,'item.bulk_metadata_updated',{targetType:'items',metadata:{scope:current.scope,requestedCount:items.length,updatedCount:updates.length,failedCount:failures.length,affectedIds:updates.map(value=>value.value.id),changes:updates.map(value=>({id:value.value.id,before:value.before,after:value.after,changedFields:value.changedFields})),failures:failures.map(({item,error})=>({id:item.id,name:item.name,code:error.code||'URL_METADATA_FAILED'}))}}))();
     return res.json({totalCount:items.length,updatedCount:updates.length,failedCount:failures.length,items:updates.map(value=>value.value),failures:failures.map(({item,error})=>({id:item.id,name:item.name,code:error.code||'URL_METADATA_FAILED',error:error.status?error.message:'网站信息识别失败'}))});
   }catch(error){return sendError(res,error,'ITEM_BULK_METADATA_FAILED');}
 }

@@ -70,6 +70,7 @@ function BatchMoveBar({
   moving,
   deleting,
   recognizing,
+  recognitionProgress,
 }) {
   const { t, locale } = useI18n();
   return (
@@ -115,9 +116,31 @@ function BatchMoveBar({
             disabled={moving || deleting || recognizing}
             onClick={onRecognize}
           >
-            <Icon name={recognizing ? "refresh" : "globe"} size={14} />
-            {t(recognizing ? "batch.identifying" : "batch.identify")}
+            <Icon
+              name={recognizing ? "refresh" : "globe"}
+              size={14}
+              className={recognizing ? "batch-identify-spinner" : ""}
+            />
+            {recognizing
+              ? t("batch.identifyingProgress", recognitionProgress)
+              : t("batch.identify")}
           </button>
+          {recognizing && recognitionProgress && (
+            <span className="batch-identify-progress" role="status">
+              <span className="batch-progress-track">
+                <span
+                  style={{
+                    width: `${Math.round(
+                      (recognitionProgress.processed /
+                        recognitionProgress.total) *
+                        100,
+                    )}%`,
+                  }}
+                />
+              </span>
+              {t("batch.identifyStats", recognitionProgress)}
+            </span>
+          )}
           {onShare && (
             <button
               className="icon-btn"
@@ -208,6 +231,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     [moving, setMoving] = useState(false),
     [deleting, setDeleting] = useState(false),
     [recognizing, setRecognizing] = useState(false),
+    [recognitionProgress, setRecognitionProgress] = useState(null),
     [assistantRequest, setAssistantRequest] = useState(null);
   const spaceReady =
     identityKey !== null &&
@@ -466,20 +490,60 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     if (!canManage || !ids.length || moving || deleting || recognizing) return;
     if (!confirm(t("batch.confirmIdentify", { count: ids.length }))) return;
     setRecognizing(true);
+    setRecognitionProgress({
+      processed: 0,
+      total: ids.length,
+      updated: 0,
+      failed: 0,
+    });
     setError("");
+    let processed = 0,
+      updated = 0,
+      failed = 0,
+      lastError = null;
     try {
-      const result = await api.bulkInspectItems(space, ids);
+      const chunkSize = 12;
+      for (let offset = 0; offset < ids.length; offset += chunkSize) {
+        const chunk = ids.slice(offset, offset + chunkSize);
+        try {
+          const result = await api.bulkInspectItems(space, chunk);
+          updated += result.updatedCount;
+          failed += result.failedCount;
+          const replacements = new Map(
+            result.items.map((item) => [item.id, item]),
+          );
+          setSnapshot((previous) => ({
+            ...previous,
+            items: previous.items.map(
+              (item) => replacements.get(item.id) || item,
+            ),
+          }));
+        } catch (e) {
+          if (e.status === 401 || e.status === 403) throw e;
+          failed += chunk.length;
+          lastError = e;
+        }
+        processed += chunk.length;
+        setRecognitionProgress({
+          processed,
+          total: ids.length,
+          updated,
+          failed,
+        });
+      }
       toastMessage(
         t("batch.identified", {
-          updated: result.updatedCount,
-          failed: result.failedCount,
+          updated,
+          failed,
         }),
       );
+      if (!updated && lastError) setError(errorMessage(lastError));
       await load();
     } catch (e) {
       setError(errorMessage(e));
     } finally {
       setRecognizing(false);
+      setRecognitionProgress(null);
     }
   }
   async function deleteSelectedItems() {
@@ -727,6 +791,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
             moving={moving}
             deleting={deleting}
             recognizing={recognizing}
+            recognitionProgress={recognitionProgress}
             onShare={
               space === "personal"
                 ? () => {
