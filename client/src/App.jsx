@@ -37,6 +37,7 @@ import {
 } from "./utils/workspaceSnapshot.js";
 import PersonalToolsModal from "./components/PersonalToolsModal.jsx";
 import GlobalSearch from "./components/GlobalSearch.jsx";
+import RecognitionResultDialog from "./components/RecognitionResultDialog.jsx";
 
 const validView = (value) =>
   ["card", "compact", "dense"].includes(value) ? value : "card";
@@ -75,6 +76,8 @@ function BatchMoveBar({
   deleting,
   recognizing,
   recognitionProgress,
+  hasRecognitionResult,
+  onShowRecognitionResult,
 }) {
   const { t, locale } = useI18n();
   return (
@@ -97,6 +100,7 @@ function BatchMoveBar({
           <select
             aria-label={t("batch.targetCategory")}
             value={target}
+            disabled={recognizing}
             onChange={(event) => onTarget(event.target.value)}
           >
             <option value="">{t("batch.chooseCategory")}</option>
@@ -163,10 +167,16 @@ function BatchMoveBar({
             <Icon name="trash" size={14} />
             {t(deleting ? "batch.deleting" : "batch.delete")}
           </button>
-          <button className="text-btn" onClick={onClear}>
+          <button className="text-btn" disabled={recognizing} onClick={onClear}>
             {t("batch.clear")}
           </button>
         </>
+      )}
+      {hasRecognitionResult && !recognizing && (
+        <button className="text-btn batch-result-trigger" onClick={onShowRecognitionResult}>
+          <Icon name="docs" size={14} />
+          {t("batch.viewIdentifyDetails")}
+        </button>
       )}
     </div>
   );
@@ -236,6 +246,8 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     [deleting, setDeleting] = useState(false),
     [recognizing, setRecognizing] = useState(false),
     [recognitionProgress, setRecognitionProgress] = useState(null),
+    [recognitionResult, setRecognitionResult] = useState(null),
+    [showRecognitionResult, setShowRecognitionResult] = useState(false),
     [assistantRequest, setAssistantRequest] = useState(null);
   const spaceReady =
     identityKey !== null &&
@@ -252,6 +264,15 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     return () =>
       window.removeEventListener("navpilot:assistant-request", launch);
   }, []);
+  useEffect(() => {
+    if (!recognizing) return undefined;
+    const preventLeave = (event) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", preventLeave);
+    return () => window.removeEventListener("beforeunload", preventLeave);
+  }, [recognizing]);
   const space = spaceReady ? selection.space : null;
   useEffect(() => {
     if (identityKey === null) return;
@@ -268,6 +289,8 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     setDeleteImpact(null);
     setSelectedIds(new Set());
     setBatchCategory("");
+    setRecognitionResult(null);
+    setShowRecognitionResult(false);
     const preferred =
         auth.user?.preferences?.defaultSpace ||
         localStorage.getItem(`navpilot_space_v1:${auth.user?.id}`),
@@ -381,6 +404,10 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
   const canManage =
     (canEditPublic && publicEditMode) || (isPersonalOwner && personalEditMode);
   function exitEditModes() {
+    if (recognizing) {
+      toastMessage(t("batch.recognitionLocked"));
+      return;
+    }
     setPublicEditMode(false);
     setPersonalEditMode(false);
     setEditingItem(null);
@@ -395,11 +422,17 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     setTimeout(() => setToast(""), 2400);
   }
   function switchSpace(next) {
+    if (recognizing) {
+      toastMessage(t("batch.recognitionLocked"));
+      return;
+    }
     if (next === "personal" && !auth.authenticated) {
       auth.setLoginOpen(true);
       return;
     }
     exitEditModes();
+    setRecognitionResult(null);
+    setShowRecognitionResult(false);
     generation.current += 1;
     setSelection({ identityKey, space: next });
     setSnapshot({ key: null, status: "idle", categories: [], items: [] });
@@ -449,6 +482,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     await load();
   }
   function toggleSelected(id) {
+    if (recognizing) return;
     setSelectedIds((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
@@ -457,6 +491,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     });
   }
   function toggleVisible() {
+    if (recognizing) return;
     setSelectedIds((current) => {
       const next = new Set(current),
         all =
@@ -481,6 +516,10 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     });
   }
   function startDrag(event, item) {
+    if (recognizing) {
+      event.preventDefault();
+      return;
+    }
     const ids = selectedIds.has(item.id) ? [...selectedIds] : [item.id];
     if (!selectedIds.has(item.id)) setSelectedIds(new Set(ids));
     event.dataTransfer.effectAllowed = "move";
@@ -510,7 +549,15 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     const ids = [...selectedIds];
     if (!canManage || !ids.length || moving || deleting || recognizing) return;
     if (!confirm(t("batch.confirmIdentify", { count: ids.length }))) return;
+    const beforeById = new Map(
+        items.filter((item) => selectedIds.has(item.id)).map((item) => [item.id, item]),
+      ),
+      successes = [],
+      failureDetails = [],
+      metadataFields = ["name", "description", "icon"];
     setRecognizing(true);
+    setRecognitionResult(null);
+    setShowRecognitionResult(false);
     setRecognitionProgress({
       processed: 0,
       total: ids.length,
@@ -528,8 +575,27 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
         const chunk = ids.slice(offset, offset + chunkSize);
         try {
           const result = await api.bulkInspectItems(space, chunk);
-          updated += result.updatedCount;
-          failed += result.failedCount;
+          result.items.forEach((after) => {
+            const before = beforeById.get(after.id) || after;
+            successes.push({
+              id: after.id,
+              before,
+              after,
+              changedFields: metadataFields.filter(
+                (field) => String(before[field] || "") !== String(after[field] || ""),
+              ),
+            });
+          });
+          result.failures.forEach((failure) => {
+            const before = beforeById.get(failure.id);
+            failureDetails.push({
+              ...failure,
+              url: before?.url || "",
+              error: failure.error || t("errors.generic"),
+            });
+          });
+          updated = successes.length;
+          failed = failureDetails.length;
           const replacements = new Map(
             result.items.map((item) => [item.id, item]),
           );
@@ -540,9 +606,30 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
             ),
           }));
         } catch (e) {
-          if (e.status === 401 || e.status === 403) throw e;
-          failed += chunk.length;
           lastError = e;
+          const failedIds =
+            e.status === 401 || e.status === 403 ? ids.slice(offset) : chunk;
+          failedIds.forEach((id) => {
+            const before = beforeById.get(id);
+            failureDetails.push({
+              id,
+              name: before?.name || `#${id}`,
+              url: before?.url || "",
+              code: e.code || "ITEM_BULK_METADATA_FAILED",
+              error: errorMessage(e),
+            });
+          });
+          failed = failureDetails.length;
+          if (e.status === 401 || e.status === 403) {
+            processed = ids.length;
+            setRecognitionProgress({
+              processed,
+              total: ids.length,
+              updated,
+              failed,
+            });
+            break;
+          }
         }
         processed += chunk.length;
         setRecognitionProgress({
@@ -552,6 +639,14 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
           failed,
         });
       }
+      const detail = {
+        total: ids.length,
+        successes,
+        failures: failureDetails,
+        finishedAt: Date.now(),
+      };
+      setRecognitionResult(detail);
+      setShowRecognitionResult(true);
       toastMessage(
         t("batch.identified", {
           updated,
@@ -559,7 +654,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
         }),
       );
       if (!updated && lastError) setError(errorMessage(lastError));
-      await load();
+      await load().catch((e) => setError(errorMessage(e)));
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -658,7 +753,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
           item={item}
           viewMode={viewMode}
           checking={checking.has(item.id)}
-          canManage={canManage}
+          canManage={canManage && !recognizing}
           selected={selectedIds.has(item.id)}
           onToggleSelect={() => toggleSelected(item.id)}
           onDragStart={(event) => startDrag(event, item)}
@@ -744,6 +839,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
           {isPersonalOwner && (
             <button
               className="icon-btn"
+              disabled={recognizing}
               onClick={() => {
                 setPersonalToolsTab("inbox");
                 setShowPersonalTools(true);
@@ -757,13 +853,14 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
           )}
           {canManage && (
             <>
-              <button className="icon-btn" onClick={() => setEditingItem({})}>
+              <button className="icon-btn" disabled={recognizing} onClick={() => setEditingItem({})}>
                 <Icon name="plus" size={16} />
                 {t("nav.add")}
               </button>
               {space === "public" && (
                 <button
                   className="icon-btn"
+                  disabled={recognizing}
                   onClick={() => setShowPublicAi(true)}
                 >
                   <Icon name="assistant" size={16} />
@@ -772,7 +869,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
               )}
               <button
                 className="icon-btn"
-                disabled={checkingAll}
+                disabled={checkingAll || recognizing}
                 onClick={checkAll}
               >
                 <Icon name="refresh" size={16} />
@@ -780,7 +877,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
               </button>
             </>
           )}
-          <AccountMenu />
+          <AccountMenu disabled={recognizing} />
           <LocaleSwitcher />
           <ThemeSwitcher theme={theme} onChange={onThemeChange} />
         </div>
@@ -797,6 +894,8 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
         personalEditMode={personalEditMode}
         onEnterPersonalEdit={() => setPersonalEditMode(true)}
         onExitPersonalEdit={exitEditModes}
+        locked={recognizing}
+        lockLabel={t("batch.recognitionLocked")}
       />
       <div className={`content-toolbar ${canManage ? "editing" : ""}`}>
         {canManage ? (
@@ -813,6 +912,8 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
             deleting={deleting}
             recognizing={recognizing}
             recognitionProgress={recognitionProgress}
+            hasRecognitionResult={Boolean(recognitionResult)}
+            onShowRecognitionResult={() => setShowRecognitionResult(true)}
             onShare={
               space === "personal"
                 ? () => {
@@ -867,7 +968,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
           counts={counts}
           active={activeCategory}
           onSelect={setActiveCategory}
-          manageable={canManage}
+          manageable={canManage && !recognizing}
           onCreate={createCategory}
           onRename={renameCategory}
           onDelete={requestDelete}
@@ -956,6 +1057,12 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
             toastMessage(t("toast.saved"));
             await load();
           }}
+        />
+      )}
+      {showRecognitionResult && recognitionResult && (
+        <RecognitionResultDialog
+          result={recognitionResult}
+          onClose={() => setShowRecognitionResult(false)}
         />
       )}
       <AiAssistantWidget

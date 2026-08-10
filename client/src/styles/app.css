@@ -828,6 +828,41 @@ table.admin-table td.desc-cell { white-space: normal; max-width: 220px; color: v
 .setting-label-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .text-btn { border: none; background: transparent; color: var(--accent); cursor: pointer; font-size: 11.5px; padding: 0; }
 .text-btn:hover { text-decoration: underline; }
+.text-btn:disabled { opacity: .45; cursor: not-allowed; text-decoration: none; }
+.batch-result-trigger { display: inline-flex; align-items: center; gap: 5px; }
+
+.recognition-result-mask { z-index: 250; }
+.recognition-result-dialog { width: min(920px,calc(100vw - 32px)); max-width: 920px; height: min(780px,calc(100dvh - 32px)); max-height: 780px; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.recognition-result-header { flex: 0 0 auto; display: grid; grid-template-columns: 42px minmax(0,1fr) 30px; align-items: start; gap: 12px; padding: 18px 20px; border-bottom: 1px solid var(--border); }
+.recognition-result-header>span { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; color: var(--accent); background: var(--accent-soft); }
+.recognition-result-header h3 { margin: 1px 0 4px; }
+.recognition-result-header p { margin: 0; color: var(--text-tertiary); font-size: 10.5px; }
+.recognition-result-stats { flex: 0 0 auto; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; padding: 14px 20px 10px; }
+.recognition-result-stats>div { display: flex; align-items: baseline; gap: 7px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
+.recognition-result-stats strong { font: 17px var(--font-mono); }
+.recognition-result-stats span { color: var(--text-tertiary); font-size: 9.5px; }
+.recognition-result-stats .success strong { color: var(--online); }.recognition-result-stats .changed strong { color: var(--accent); }.recognition-result-stats .failure strong { color: var(--offline); }
+.recognition-result-filters { flex: 0 0 auto; display: flex; gap: 5px; padding: 0 20px 10px; border-bottom: 1px solid var(--border); }
+.recognition-result-filters button { padding: 5px 11px; border: 1px solid transparent; border-radius: 999px; background: transparent; color: var(--text-tertiary); font-size: 10px; cursor: pointer; }
+.recognition-result-filters button.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.recognition-result-list { min-height: 0; flex: 1; overflow: auto; padding: 4px 20px; }
+.recognition-result-item { display: grid; grid-template-columns: 42px minmax(0,1fr); align-items: start; gap: 11px; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.recognition-result-icon { width: 40px; height: 40px; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; color: var(--accent); background: var(--bg); }
+.recognition-result-item.failure .recognition-result-icon { color: var(--offline); background: var(--offline-soft); }
+.recognition-result-content { min-width: 0; }
+.recognition-result-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.recognition-result-title-row>div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.recognition-result-title-row strong,.recognition-result-title-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recognition-result-title-row strong { font-size: 12px; }.recognition-result-title-row small { color: var(--text-tertiary); font: 9px var(--font-mono); }
+.recognition-result-title-row>span { flex: 0 0 auto; padding: 3px 7px; border-radius: 999px; color: var(--online); background: var(--online-soft); font-size: 8.5px; }
+.recognition-result-item.failure .recognition-result-title-row>span { color: var(--offline); background: var(--offline-soft); }
+.recognition-result-changes { display: grid; gap: 5px; margin-top: 9px; }
+.recognition-result-changes>div { display: grid; grid-template-columns: 42px minmax(0,1fr) 15px minmax(0,1fr); align-items: center; gap: 6px; min-width: 0; padding: 6px 8px; border-radius: 7px; background: var(--bg); }
+.recognition-result-changes label { color: var(--text-tertiary); font-size: 8.5px; }.recognition-result-changes del,.recognition-result-changes ins { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9.5px; text-decoration: none; }.recognition-result-changes del { color: var(--text-tertiary); }.recognition-result-changes ins { color: var(--text-secondary); }
+.recognition-result-error { margin: 8px 0 0; color: var(--offline); font-size: 10px; }
+.recognition-result-empty { min-height: 240px; display: grid; place-items: center; color: var(--text-tertiary); font-size: 11px; }
+.recognition-result-footer { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--border); background: var(--bg-elevated); }
+.recognition-result-footer>span { color: var(--text-tertiary); font: 9px var(--font-mono); }
 .settings-warning { padding: 10px 12px; border-radius: var(--radius-sm); background: var(--unknown-soft); color: var(--text-secondary); font-size: 11.5px; line-height: 1.55; }
 .settings-loading { padding: 40px 20px; }
 .setting-row {
@@ -1367,6 +1402,8 @@ table.admin-table td.desc-cell { white-space: normal; max-width: 220px; color: v
   .item-url-control .icon-btn { width: 100%; }
   .profile-modal { width: calc(100vw - 8px); max-height: calc(100dvh - 8px); }
   .personal-tools-modal { width: calc(100vw - 16px); }
+  .recognition-result-dialog { width: calc(100vw - 8px); height: calc(100dvh - 8px); max-height: none; }
+  .recognition-result-header { padding: 14px; }.recognition-result-stats { grid-template-columns: repeat(2,minmax(0,1fr)); padding: 12px 14px 8px; }.recognition-result-filters { padding: 0 14px 9px; }.recognition-result-list { padding: 3px 14px; }.recognition-result-title-row { flex-direction: column; gap: 6px; }.recognition-result-changes>div { grid-template-columns: 38px minmax(0,1fr); }.recognition-result-changes>div>.ui-icon { display: none; }.recognition-result-changes ins { grid-column: 2; }.recognition-result-footer { padding: 10px 14px; }
   .analytics-grid-expanded { grid-template-columns: 1fr; }
   .analytics-grid-expanded .analytics-trend-card,.analytics-grid-expanded .region-card { grid-column: 1; }
 }
