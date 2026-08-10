@@ -41,6 +41,7 @@ import RecognitionResultDialog from "./components/RecognitionResultDialog.jsx";
 import ResourceOverview from "./components/ResourceOverview.jsx";
 import { browserPreference } from "./utils/browserPreference.js";
 import NotificationCenter from "./components/NotificationCenter.jsx";
+import AiWorkspace,{launchAiWorkspace}from"./components/AiWorkspace.jsx";
 
 const validView = (value) => {
   const migrated = ["dense", "board"].includes(value) ? "overview" : value;
@@ -77,6 +78,7 @@ function BatchMoveBar({
   onRecognize,
   onDelete,
   onShare,
+  onAi,
   moving,
   deleting,
   recognizing,
@@ -164,6 +166,7 @@ function BatchMoveBar({
               {locale === "en" ? "Share" : "共享"}
             </button>
           )}
+          {onAi&&<button className="icon-btn" disabled={deleting||recognizing} onClick={onAi}><Icon name="assistant" size={14}/>{locale==='en'?'Ask AI':'交给 AI'}</button>}
           <button
             className="icon-btn batch-delete-btn"
             disabled={moving || deleting || recognizing}
@@ -888,6 +891,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
           />
         </div>
         <div className="topbar-actions">
+          <button className="icon-btn ai-workspace-entry" onClick={()=>{const category=categories.find(item=>item.id===activeCategory);launchAiWorkspace({scope:space,section:'chat',text:category?(locale==='en'?`Analyze the current category “${category.path_label||category.name}” and suggest improvements before creating any plan.`:`请先分析当前分类「${category.path_label||category.name}」的结构和资源，给出优化建议，暂时不要执行修改。`):''});}}><Icon name="assistant" size={16}/>{locale==='en'?'AI Workspace':'AI 工作台'}</button>
           {canUseSpaceTools && (
             <button
               className="icon-btn"
@@ -982,6 +986,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
               setPersonalToolsTab("share");
               setShowPersonalTools(true);
             }}
+            onAi={()=>{const names=items.filter(item=>selectedIds.has(item.id)).slice(0,30).map(item=>`「${item.name}」`).join('、');launchAiWorkspace({scope:space,section:'chat',text:locale==='en'?`Analyze these selected resources and discuss how they should be categorized, tagged, or improved before creating a plan: ${names}`:`请分析我选中的这些资源，先讨论它们应该如何分类、打标签或完善信息，确认后再生成方案：${names}`});}}
             onMove={() =>
               moveItems(
                 [...selectedIds],
@@ -1200,7 +1205,7 @@ export default function App() {
     if (icon)
       icon.href = branding.faviconUrl || branding.logoUrl || defaultFavicon;
   }, [publicSettings.branding]);
-  const admin = location.pathname.startsWith("/admin");
+  const admin = location.pathname.startsWith("/admin"),aiWorkspace=location.pathname.startsWith('/ai');
   const branding = publicSettings.branding || {
     siteName: "NavPilot",
     logoUrl: "",
@@ -1217,7 +1222,7 @@ export default function App() {
             setPublicSettings((current) => ({ ...current, branding: next }))
           }
         />
-      ) : (
+      ) : aiWorkspace ? <AiWorkspace theme={theme} onThemeChange={changeTheme} branding={branding} aiPersonalEnabled={Boolean(publicSettings.ai_personal_enabled)}/> : (
         <PortalWorkspace
           theme={theme}
           onThemeChange={changeTheme}

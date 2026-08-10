@@ -81,8 +81,8 @@ messages['zh-CN'].errors.AI_UPSTREAM_TIMEOUT = '上游模型响应超时；系�
 messages.en.errors.AI_UPSTREAM_TIMEOUT = 'The upstream model timed out after an automatic compressed-context retry. Increase the timeout or add a fallback model.';
 
 const supplementalAuditEvents = {
-  'zh-CN': { 'item.bulk_deleted': '批量删除资源', 'item.bulk_metadata_updated': '批量识别网站信息' },
-  en: { 'item.bulk_deleted': 'Resources bulk deleted', 'item.bulk_metadata_updated': 'Website metadata identified in bulk' },
+  'zh-CN': { 'item.bulk_deleted': '批量删除资源', 'item.bulk_metadata_updated': '批量识别网站信息', 'ai.discussion.created':'AI 讨论完成', 'ai.discussion.failed':'AI 讨论失败' },
+  en: { 'item.bulk_deleted': 'Resources bulk deleted', 'item.bulk_metadata_updated': 'Website metadata identified in bulk', 'ai.discussion.created':'AI discussion completed', 'ai.discussion.failed':'AI discussion failed' },
 };
 
 export function translateAuditEvent(locale, eventType) {

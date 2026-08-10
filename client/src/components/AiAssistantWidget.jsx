@@ -5,7 +5,7 @@ import { useI18n } from "../i18n/LocaleContext.jsx";
 import Icon, { ContentIcon } from "./Icon.jsx";
 import AiCommandPanel from "./AiCommandPanel.jsx";
 import { possibleURL } from "../utils/urlSuggestion.js";
-import AiOrganizePanel from "./AiOrganizePanel.jsx";
+import { launchAiWorkspace } from "./AiWorkspace.jsx";
 
 export default function AiAssistantWidget({
   aiPersonalEnabled,
@@ -246,6 +246,7 @@ export default function AiAssistantWidget({
                 <small>{t("assistant.subtitle")}</small>
               </div>
               <kbd>⌘/Ctrl J</kbd>
+              <button className="mini-btn assistant-expand" title={locale==='en'?'Open AI Workspace':'进入 AI 工作台'} onClick={()=>launchAiWorkspace({scope:tab==='operate'?operationScope:chooseDefaultScope(activeSpace),text:tab==='operate'?operationText:query,section:'chat'})}><Icon name="grid" size={14}/></button>
               <button
                 className="mini-btn"
                 aria-label={t("common.close")}
@@ -276,17 +277,6 @@ export default function AiAssistantWidget({
                 <Icon name="assistant" size={15} />
                 {t("assistant.operate")}
               </button>
-              {auth.authenticated && (
-                <button
-                  role="tab"
-                  aria-selected={tab === "organize"}
-                  className={tab === "organize" ? "active" : ""}
-                  onClick={() => setTab("organize")}
-                >
-                  <Icon name="grid" size={15} />
-                  {locale === "en" ? "Organize" : "智能整理"}
-                </button>
-              )}
             </div>
             {tab === "search" && (
               <div className="ai-widget-body assistant-body" role="tabpanel">
@@ -406,26 +396,8 @@ export default function AiAssistantWidget({
                   </div>
                 </div>
                 {operationGate || (
-                  <AiCommandPanel
-                    key={`${operationScope}-${editorVersion}`}
-                    scope={operationScope}
-                    initialText={operationText}
-                    compact
-                    onExecuted={(result) =>
-                      onResourcesChanged?.(operationScope, result)
-                    }
-                  />
+                  <><div className="assistant-workspace-prompt"><div><Icon name="grid" size={16}/><span><strong>{locale==='en'?'Need more room?':'需要复杂规划？'}</strong><small>{locale==='en'?'Discuss ideas, preview taxonomy trees, and review task history in AI Workspace.':'在 AI 工作台讨论想法、预览分类树并查看任务历史。'}</small></span></div><button className="text-btn" onClick={()=>launchAiWorkspace({scope:operationScope,text:operationText,section:'chat'})}>{locale==='en'?'Open workspace':'进入工作台'}<Icon name="chevronRight" size={13}/></button></div><AiCommandPanel key={`${operationScope}-${editorVersion}`} scope={operationScope} initialText={operationText} compact onExecuted={(result)=>onResourcesChanged?.(operationScope,result)}/></>
                 )}
-              </div>
-            )}
-            {tab === "organize" && auth.authenticated && (
-              <div className="ai-widget-body assistant-body assistant-organize-body" role="tabpanel">
-                <AiOrganizePanel
-                  initialScope={activeSpace}
-                  isAdmin={auth.isAdmin}
-                  personalEnabled={aiPersonalEnabled}
-                  onResourcesChanged={onResourcesChanged}
-                />
               </div>
             )}
           </section>

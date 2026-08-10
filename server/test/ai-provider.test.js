@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 process.env.NAVPILOT_DB_PATH = ":memory:";
 const db = require("../src/db");
 const axios = require('axios');
-const { extractJson, normalizeEnvelope, parseCommands, parsePlan, requestCommandsWithConfig } = require("../src/services/ai/openAiCompatibleProvider");
+const { extractJson, normalizeEnvelope, parseCommands, parsePlan, requestCommandsWithConfig, requestDiscussionWithConfig } = require("../src/services/ai/openAiCompatibleProvider");
 
 test("AI provider extracts embedded arrays and normalizes compatible envelopes", () => {
   assert.deepEqual(extractJson("<think>ignore</think> result: ```json\n[{\"op\":\"item.delete\",\"item\":\"Old\"}]\n```"), [{ op:"item.delete", item:"Old" }]);
@@ -54,5 +54,17 @@ test('AI provider retries a timeout once with compressed context and uses the mo
   assert.equal(requests[0].options.timeout, 120000);
   assert.equal(requests[1].options.timeout, 120000);
   assert.ok(requests[1].body.messages[1].content.length < requests[0].body.messages[1].content.length);
+});
+
+test('AI discussion returns advisory text without requiring an executable command envelope', async (t) => {
+  t.mock.method(axios, 'post', async (_url, body) => {
+    assert.match(body.messages[0].content, /绝不生成或声称执行任何修改/);
+    return { data:{ choices:[{ message:{ content:'建议先按使用范围建立一级分类，再按业务职能细分。\n\n建议下一步：确认部门边界后转成执行方案。' } }] } };
+  });
+  const result=await requestDiscussionWithConfig('先讨论公司导航如何分类', { context:{ resourceCount:20,resources:[],categories:[] } }, {
+    baseURL:'https://ai.example/v1',apiKey:'secret',model:'advisor',requestTimeoutMs:60000,
+  });
+  assert.match(result.answer,/建议下一步/);
+  assert.equal(result.model,'advisor');
 });
 test.after(()=>db.close());
