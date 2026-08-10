@@ -1,0 +1,37 @@
+name: navpilot
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: navpilot:local
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${NAVPILOT_HTTP_PORT:-8787}:8787"
+    env_file:
+      - ./server/.env
+    environment:
+      NODE_ENV: "${NAVPILOT_NODE_ENV:-production}"
+      PORT: "8787"
+      NAVPILOT_DB_PATH: /app/server/data/navpilot.db
+    volumes:
+      - "${NAVPILOT_DATA_SOURCE:-navpilot-data}:/app/server/data"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  navpilot-data:

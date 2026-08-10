@@ -1,0 +1,12 @@
+import React, { useEffect, useId, useRef, useState } from 'react';
+
+export default function DropdownMenu({ trigger, children, className = '', menuClassName = '' }) {
+  const [open,setOpen]=useState(false); const rootRef=useRef(null); const triggerRef=useRef(null); const menuRef=useRef(null); const timerRef=useRef(null); const id=useId();
+  const clearTimer=()=>{if(timerRef.current){clearTimeout(timerRef.current);timerRef.current=null;}};
+  const close=(restore=false)=>{clearTimer();setOpen(false);if(restore)setTimeout(()=>triggerRef.current?.focus(),0);};
+  const scheduleClose=()=>{if(window.matchMedia?.('(hover: hover) and (pointer: fine)').matches){clearTimer();timerRef.current=setTimeout(()=>close(false),220);}};
+  useEffect(()=>{function outside(event){if(rootRef.current&&!rootRef.current.contains(event.target))close(false);}function key(event){if(!open)return;if(event.key==='Escape'){event.preventDefault();close(true);return;}const items=[...(menuRef.current?.querySelectorAll('button:not(:disabled),a[href]')||[])];const index=items.indexOf(document.activeElement);if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();const next=event.key==='ArrowDown'?(index+1)%items.length:(index-1+items.length)%items.length;items[next]?.focus();}if(event.key==='Home'){event.preventDefault();items[0]?.focus();}if(event.key==='End'){event.preventDefault();items.at(-1)?.focus();}}document.addEventListener('pointerdown',outside);document.addEventListener('keydown',key);return()=>{document.removeEventListener('pointerdown',outside);document.removeEventListener('keydown',key);clearTimer();};},[open]);
+  function onBlur(event){if(!rootRef.current?.contains(event.relatedTarget))close(false);}
+  const triggerNode=React.cloneElement(trigger,{ref:triggerRef,'aria-expanded':open,'aria-haspopup':'menu','aria-controls':id,onClick:(event)=>{trigger.props.onClick?.(event);setOpen(v=>!v);},onKeyDown:(event)=>{trigger.props.onKeyDown?.(event);if(!open&&(event.key==='ArrowDown'||event.key==='Enter'||event.key===' ')){event.preventDefault();setOpen(true);setTimeout(()=>menuRef.current?.querySelector('button:not(:disabled),a[href]')?.focus(),0);}}});
+  return <div ref={rootRef} className={`dropdown ${className}`} onBlur={onBlur} onPointerEnter={clearTimer} onPointerLeave={scheduleClose}>{triggerNode}{open&&<div id={id} ref={menuRef} role="menu" className={`theme-menu dropdown-panel ${menuClassName}`} onClick={(event)=>{if(event.target.closest('button,a'))close(false);}}>{children}</div>}</div>;
+}

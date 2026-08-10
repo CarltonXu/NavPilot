@@ -1,0 +1,21 @@
+const express = require('express');
+const db = require('../db');
+const { requireUser, requireAdmin, requirePasswordChanged } = require('../middleware/auth');
+const { auditWith } = require('../services/eventService');
+const { createNavigationService, realm } = require('../services/navigationService');
+
+const router = express.Router();
+const navigation = createNavigationService(db);
+function authorizeScope(req,res,scope,next){if(scope==='public')return requireAdmin(req,res,()=>requirePasswordChanged(req,res,next));if(scope==='personal')return requireUser(req,res,()=>requirePasswordChanged(req,res,next));return res.status(400).json({code:'INVALID_SCOPE',error:'无效空间范围'});}
+function currentRealm(req,scope){return realm(scope,scope==='personal'?req.auth.user.id:null);}
+function sendError(res,error,fallback){return res.status(error.status||500).json({code:error.code||fallback,error:error.status?error.message:'操作失败'});}
+
+router.get('/',(req,res)=>{const scope=req.query.scope||'public';if(scope==='personal'&&!req.auth?.user)return res.status(401).json({code:'AUTH_REQUIRED',error:'请先登录'});try{return res.json(navigation.listCategories(currentRealm(req,scope)));}catch(error){return sendError(res,error,'CATEGORY_LIST_FAILED');}});
+router.post('/',(req,res)=>authorizeScope(req,res,req.body.scope,()=>{try{const current=currentRealm(req,req.body.scope);const result=db.transaction(()=>{const value=navigation.createCategory(current,req.body);auditWith(db,req,'category.created',{targetType:'category',targetId:value.value.id,metadata:{scope:current.scope,after:value.after}});return value;})();return res.status(201).json(result.value);}catch(error){return sendError(res,error,'CATEGORY_CREATE_FAILED');}}));
+function update(req,res){try{const current=currentRealm(req,req.category.scope);const result=db.transaction(()=>{const value=navigation.updateCategory(current,req.category.id,req.body);auditWith(db,req,'category.updated',{targetType:'category',targetId:req.category.id,metadata:{scope:current.scope,changedFields:value.changedFields,before:value.before,after:value.after}});return value;})();return res.json(result.value);}catch(error){return sendError(res,error,'CATEGORY_UPDATE_FAILED');}}
+function loadAndAuthorize(req,res,next){const category=db.prepare('SELECT * FROM categories WHERE id=?').get(req.params.id);if(!category)return res.status(404).json({code:'CATEGORY_NOT_FOUND',error:'分类不存在'});req.category=category;return authorizeScope(req,res,category.scope,()=>{if(category.scope==='personal'&&category.owner_id!==req.auth.user.id)return res.status(404).json({code:'CATEGORY_NOT_FOUND',error:'分类不存在'});next();});}
+router.get('/:id/impact',loadAndAuthorize,(req,res)=>{try{const current=currentRealm(req,req.category.scope);return res.json(navigation.getCategoryImpact(current,req.category.id));}catch(error){return sendError(res,error,'CATEGORY_IMPACT_FAILED');}});
+router.patch('/:id',loadAndAuthorize,update);router.put('/:id',loadAndAuthorize,update);
+router.delete('/:id',loadAndAuthorize,(req,res)=>{try{const current=currentRealm(req,req.category.scope);const result=db.transaction(()=>{const value=navigation.deleteCategory(current,req.category.id,{expectedVersion:req.body?.expectedVersion,impactHash:req.body?.impactHash,confirmSubtree:Boolean(req.body?.confirmSubtree)});auditWith(db,req,'category.deleted',{targetType:'category',targetId:req.category.id,metadata:{scope:current.scope,before:value.before,deletedCategories:value.deletedCategories,affectedCount:value.affectedItems.length,affectedItems:value.affectedItems}});return value;})();return res.json(result.value);}catch(error){return sendError(res,error,'CATEGORY_DELETE_FAILED');}});
+router.post('/reorder',(req,res)=>authorizeScope(req,res,req.body.scope,()=>{try{const current=currentRealm(req,req.body.scope);const result=db.transaction(()=>{const value=navigation.reorderCategories(current,req.body.parentId??null,req.body.orderedIds);auditWith(db,req,'category.reordered',{targetType:'category_order',metadata:{scope:current.scope,before:value.before,after:value.after}});return value;})();return res.json(result.value);}catch(error){return sendError(res,error,'CATEGORY_REORDER_FAILED');}}));
+module.exports=router;

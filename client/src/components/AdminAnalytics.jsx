@@ -1,0 +1,137 @@
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { api } from '../api.js';
+import { useI18n } from '../i18n/LocaleContext.jsx';
+import Icon from './Icon.jsx';
+
+function localizedDimension(t, group, value) {
+  const key = `analytics.dimensions.${group}.${String(value || 'other').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+  const translated = t(key);
+  return translated === key ? value || t('analytics.unknown') : translated;
+}
+
+function Bars({ data, group }) {
+  const { t } = useI18n();
+  const max = Math.max(...data.map((item) => item.value), 1);
+  if (!data.length) return <div className="chart-empty">{t('analytics.noData')}</div>;
+  return <div className="chart-bars">{data.map((item) => {
+    const label = localizedDimension(t, group, item.name);
+    return <div className="chart-bar-row" key={`${item.name}-${item.value}`}>
+      <span title={label}>{label}</span><div className="chart-bar-track"><i style={{ width: `${item.value / max * 100}%` }} /></div><strong>{item.value}</strong>
+    </div>;
+  })}</div>;
+}
+
+function TrendChart({ data }) {
+  const { t, locale } = useI18n();
+  const gradientId = useId().replace(/:/g, '');
+  const wrapRef = useRef(null);
+  const [active, setActive] = useState(null);
+  const max = Math.max(...data.map((item) => item.opens), 1);
+  const points = useMemo(() => data.map((item, index) => ({
+    ...item,
+    x: data.length === 1 ? 50 : index / (data.length - 1) * 100,
+    y: 88 - item.opens / max * 74,
+  })), [data, max]);
+  const line = points.map((point) => `${point.x},${point.y}`).join(' ');
+  const area = points.length ? `M ${points[0].x} 88 L ${points.map((point) => `${point.x} ${point.y}`).join(' L ')} L ${points.at(-1).x} 88 Z` : '';
+  function update(event) {
+    if (!points.length) return;
+    const rect = wrapRef.current.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    setActive(points[Math.round(ratio * (points.length - 1))]);
+  }
+  if (!points.length) return <div className="chart-empty">{t('analytics.noData')}</div>;
+  return <div className="line-chart" ref={wrapRef} onPointerMove={update} onPointerLeave={() => setActive(null)}>
+    <svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label={t('analytics.trend')}>
+      <defs><linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="var(--accent)" stopOpacity=".42" /><stop offset="1" stopColor="var(--accent)" stopOpacity=".02" /></linearGradient></defs>
+      {[14, 32.5, 51, 69.5, 88].map((y) => <line className="chart-grid-line" key={y} x1="0" y1={y} x2="100" y2={y} />)}
+      <path className="trend-area" d={area} fill={`url(#${gradientId})`} />
+      <polyline className="trend-line" points={line} />
+      {active && <line className="trend-reference" x1={active.x} y1="8" x2={active.x} y2="88" />}
+    </svg>
+    <div className="trend-markers" aria-hidden="true">{points.map((point) => <i key={point.day} className={`trend-point ${active?.day === point.day ? 'active' : ''}`} style={{ left:`${point.x}%`, top:`${point.y}%` }} />)}</div>
+    {active && <div className="trend-tooltip" style={{ left: `${active.x}%` }}>
+      <span>{new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' }).format(new Date(`${active.day}T00:00:00`))}</span>
+      <strong><i />{t('analytics.opens')} <b>{active.opens}</b></strong>
+      <strong><i className="secondary" />{t('analytics.activeUsers')} <b>{active.activeUsers}</b></strong>
+    </div>}
+    <div className="chart-axis"><span>{points[0]?.day}</span><span>{points.at(-1)?.day}</span></div>
+  </div>;
+}
+
+const chartDefinitions = [
+  ['top', 'topResources', 'resources', 'link'],
+  ['sources', 'sources', 'sources', 'grid'],
+  ['devices', 'devices', 'devices', 'user'],
+  ['spaces', 'spaces', 'spaces', 'building'],
+];
+
+export default function AdminAnalytics() {
+  const { t, errorMessage } = useI18n();
+  const [days, setDays] = useState(30);
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let live = true; setError('');
+    api.getAnalytics(days).then((result) => live && setData(result)).catch((err) => live && setError(errorMessage(err)));
+    return () => { live = false; };
+  }, [days, errorMessage]);
+  if (!data && !error) return <div className="admin-panel">{t('common.loading')}</div>;
+  if (error) return <div className="admin-panel error-text">{error}</div>;
+  const kpis = [['opens','grid'],['activeUsers','user'],['users','shield'],['resources','link']];
+  return <div className="analytics-dashboard">
+    <div className="analytics-filters"><div><h2>{t('analytics.title')}</h2><p>{t('analytics.description')}</p></div><label><span>{t('analytics.range')}</span><select value={days} onChange={(event) => setDays(Number(event.target.value))}>{[7,30,90].map((value) => <option value={value} key={value}>{t('analytics.days',{count:value})}</option>)}</select></label></div>
+    <div className="kpi-grid">{kpis.map(([key,icon]) => <article key={key}><span className="kpi-icon"><Icon name={icon} size={17}/></span><div><span>{t(`analytics.${key}`)}</span><strong>{data.summary[key]}</strong></div></article>)}</div>
+    <div className="analytics-grid"><figure className="chart-card chart-wide"><figcaption><div className="chart-title-icon"><Icon name="grid" size={17}/></div><div><strong>{t('analytics.trend')}</strong><small>{t('analytics.trendDesc')}</small></div><span className="chart-tag">{t('analytics.liveEvents')}</span></figcaption><TrendChart data={data.trend}/></figure>
+      {chartDefinitions.map(([title,key,group,icon]) => <figure className="chart-card" key={key}><figcaption><div className="chart-title-icon"><Icon name={icon} size={17}/></div><strong>{t(`analytics.${title}`)}</strong></figcaption><Bars data={data[key]} group={group}/></figure>)}
+    </div>
+  </div>;
+}
+
+function EventTag({ type }) {
+  const { auditEventLabel } = useI18n();
+  return <span className="audit-event-tag"><Icon name={type.startsWith('auth.') ? 'user' : type.startsWith('settings.') ? 'settings' : type.startsWith('category.') ? 'folder' : type.startsWith('ai.') ? 'assistant' : 'link'} size={14}/>{auditEventLabel(type)}</span>;
+}
+
+const FIELD_LABELS = {
+  id:'ID', name:'名称', url:'URL', icon:'图标', description:'描述', categoryId:'分类 ID', categoryName:'分类', sortOrder:'顺序', checkMethod:'探测方式', checkTarget:'探测目标', checkEnabled:'启用探测', scope:'空间', status:'状态', version:'版本', orderedIds:'排序 ID', affectedCount:'影响数量', affectedIds:'影响对象', operationTypes:'操作类型', operationCount:'操作数量', changedFields:'变更字段', reason:'原因', inputHash:'指令摘要', displayName:'显示名', role:'角色'
+};
+function fieldLabel(key, locale) {
+  if (locale === 'en') return key.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
+  return FIELD_LABELS[key] || key;
+}
+function DetailValue({ value, locale }) {
+  if (value === null || value === '') return '—';
+  if (typeof value === 'boolean') return locale === 'en' ? (value ? 'Yes' : 'No') : (value ? '是' : '否');
+  if (Array.isArray(value)) return <div className="audit-value-list">{value.map((item,index) => <span key={index}>{typeof item === 'object' ? JSON.stringify(item) : String(item)}</span>)}</div>;
+  if (typeof value === 'object') return <dl className="audit-nested">{Object.entries(value).map(([key,item]) => <React.Fragment key={key}><dt>{fieldLabel(key,locale)}</dt><dd><DetailValue value={item} locale={locale}/></dd></React.Fragment>)}</dl>;
+  return String(value);
+}
+function DetailBlock({ title, value }) {
+  const { locale } = useI18n();
+  if (!value || (typeof value === 'object' && !Object.keys(value).length)) return null;
+  return <section className="audit-detail-block"><h3>{title}</h3><dl>{Object.entries(value).map(([key,item]) => <React.Fragment key={key}><dt>{fieldLabel(key,locale)}</dt><dd><DetailValue value={item} locale={locale}/></dd></React.Fragment>)}</dl></section>;
+}
+
+function AuditDrawer({ event, onClose }) {
+  const { t } = useI18n();
+  const closeRef = useRef(null);
+  useEffect(() => { closeRef.current?.focus(); const key = (e) => e.key === 'Escape' && onClose(); window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key); }, [onClose]);
+  const { before, after, ...metadata } = event.metadata || {};
+  return <div className="audit-drawer-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><aside className="audit-drawer" role="dialog" aria-modal="true" aria-labelledby="audit-detail-title">
+    <header><div><span className={`outcome-tag ${event.outcome}`}>{t(`audit.outcomes.${event.outcome}`)}</span><h2 id="audit-detail-title">{t('audit.detailTitle')}</h2><EventTag type={event.eventType}/></div><button ref={closeRef} className="mini-btn audit-close" onClick={onClose} aria-label={t('common.close')}>×</button></header>
+    <div className="audit-drawer-body"><section className="audit-facts"><div><span>{t('analytics.time')}</span><strong>{new Date(event.occurredAt).toLocaleString()}</strong></div><div><span>{t('analytics.actor')}</span><strong>{event.actorUsername || t('audit.anonymous')}</strong><small>{event.actorRole || '—'}</small></div><div><span>{t('audit.target')}</span><strong>{event.targetType || '—'} · {event.targetId || '—'}</strong></div><div><span>IP</span><strong>{event.ipPrefix || '—'}</strong><small>{[event.browserFamily,event.osFamily,event.deviceClass].filter(Boolean).join(' / ') || '—'}</small></div></section>
+      <DetailBlock title={t('audit.before')} value={before}/><DetailBlock title={t('audit.after')} value={after}/><DetailBlock title={t('audit.metadata')} value={metadata}/>
+    </div>
+  </aside></div>;
+}
+
+export function AuditTable() {
+  const { t, errorMessage } = useI18n();
+  const [rows,setRows]=useState([]),[pagination,setPagination]=useState({page:1,pageSize:20,total:0,totalPages:1}),[pageSize,setPageSize]=useState(20),[selected,setSelected]=useState(null),[error,setError]=useState(''),[loading,setLoading]=useState(true);
+  const page=pagination.page;
+  useEffect(()=>{let live=true;setLoading(true);setError('');api.getAuditEvents(page,pageSize).then(result=>{if(live){setRows(result.items);setPagination(result.pagination);}}).catch(err=>live&&setError(errorMessage(err))).finally(()=>live&&setLoading(false));return()=>{live=false;};},[page,pageSize,errorMessage]);
+  const first=pagination.total?(pagination.page-1)*pagination.pageSize+1:0,last=Math.min(pagination.page*pagination.pageSize,pagination.total);
+  function changePageSize(event){const value=Number(event.target.value);setPageSize(value);setPagination(current=>({...current,page:1,pageSize:value}));}
+  return <div className="admin-panel audit-panel"><div className="audit-heading"><div><h2>{t('analytics.audit')}</h2><p>{t('audit.description')}</p></div><span className="chart-tag">{t('audit.records',{count:pagination.total})}</span></div>{error&&<div className="error-text">{error}</div>}<div className={`audit-table ${loading?'loading':''}`}><table><thead><tr><th>{t('analytics.time')}</th><th>{t('analytics.event')}</th><th>{t('analytics.actor')}</th><th>{t('audit.target')}</th><th>{t('analytics.outcome')}</th><th aria-label={t('audit.view')}></th></tr></thead><tbody>{rows.map(row=><tr key={row.id} tabIndex="0" onClick={()=>setSelected(row)} onKeyDown={e=>(e.key==='Enter'||e.key===' ')&&setSelected(row)}><td>{new Date(row.occurredAt).toLocaleString()}</td><td><EventTag type={row.eventType}/></td><td>{row.actorUsername||t('audit.anonymous')}</td><td>{row.targetType?`${row.targetType} · ${row.targetId||'—'}`:'—'}</td><td><span className={`outcome-tag ${row.outcome}`}>{t(`audit.outcomes.${row.outcome}`)}</span></td><td><Icon name="link" size={14}/></td></tr>)}</tbody></table>{!rows.length&&!loading&&!error&&<div className="chart-empty">{t('analytics.noData')}</div>}{loading&&!rows.length&&<div className="chart-empty">{t('common.loading')}</div>}</div><div className="audit-pagination"><div className="audit-page-summary"><strong>{t('audit.rangeSummary',{first,last,total:pagination.total})}</strong><span>{t('audit.pageSummary',{page:pagination.page,totalPages:pagination.totalPages})}</span></div><div className="audit-page-controls"><label><span>{t('audit.perPage')}</span><select aria-label={t('audit.pageSize')} value={pageSize} disabled={loading} onChange={changePageSize}>{[10,20,50,100].map(value=><option key={value} value={value}>{value}</option>)}</select><span>{t('audit.items')}</span></label><div className="audit-page-nav"><button className="pagination-btn" aria-label={t('audit.previous')} disabled={pagination.page<=1||loading} onClick={()=>setPagination(current=>({...current,page:current.page-1}))}><Icon name="chevronLeft" size={15}/><span>{t('audit.previous')}</span></button><span className="page-indicator">{pagination.page} / {pagination.totalPages}</span><button className="pagination-btn" aria-label={t('audit.next')} disabled={pagination.page>=pagination.totalPages||loading} onClick={()=>setPagination(current=>({...current,page:current.page+1}))}><span>{t('audit.next')}</span><Icon name="chevronRight" size={15}/></button></div></div></div>{selected&&<AuditDrawer event={selected} onClose={()=>setSelected(null)}/>}</div>;
+}
