@@ -17,7 +17,6 @@ const {
 
 const router = express.Router();
 const { audit } = require('../services/eventService');
-const { contentIntelligence } = require('../services/ai/runtime');
 
 router.get('/public', (req, res) => {
   res.json({
@@ -84,8 +83,6 @@ router.post('/admin/embedding/test', requireAdmin, requirePasswordChanged, async
   try { const result=await testEmbeddingConnection(req.body||null);audit(req,'settings.embedding.connection_tested',{targetType:'settings',targetId:'embedding',metadata:{latencyMs:result.latencyMs,dimensions:result.dimensions}});return res.json(result); }
   catch(error){audit(req,'settings.embedding.connection_tested',{outcome:'failure',targetType:'settings',targetId:'embedding',metadata:{reason:error.code||'AI_CONNECTION_FAILED'}});return sendSettingsError(res,error);}
 });
-router.get('/admin/content-domains',requireAdmin,requirePasswordChanged,(req,res)=>res.json(contentIntelligence.policies()));
-router.put('/admin/content-domain',requireAdmin,requirePasswordChanged,(req,res)=>{try{const value=contentIntelligence.setPolicy(req.auth.user,req.body.hostname,req.body.allowContent===true);audit(req,'settings.ai_content_policy.updated',{targetType:'domain',targetId:value.hostname,metadata:{allowContent:Boolean(value.allowContent)}});return res.json(value);}catch(error){return sendSettingsError(res,error);}});
 router.get('/admin/ai-usage',requireAdmin,requirePasswordChanged,(req,res)=>{const days=Math.min(90,Math.max(1,Number(req.query.days)||30)),since=Date.now()-days*86400000,rows=require('../db').prepare('SELECT feature,COALESCE(provider_model,\'unknown\') AS model,COUNT(*) AS calls,SUM(success) AS successes,ROUND(AVG(latency_ms)) AS averageLatencyMs,SUM(COALESCE(input_tokens,0)+COALESCE(output_tokens,0)) AS tokens FROM ai_usage_events WHERE created_at_ms>=? GROUP BY feature,provider_model ORDER BY calls DESC').all(since).map(row=>({...row,successRate:row.calls?Number((row.successes/row.calls).toFixed(3)):0}));res.json({days,rows});});
 
 module.exports = router;

@@ -15,7 +15,6 @@ import NavCard from "./components/NavCard.jsx";
 import ItemFormModal from "./components/ItemFormModal.jsx";
 import SpaceSwitcher from "./components/SpaceSwitcher.jsx";
 import AiAssistantWidget from "./components/AiAssistantWidget.jsx";
-import AiAddModal from "./components/AiAddModal.jsx";
 import ViewModeSwitcher from "./components/ViewModeSwitcher.jsx";
 import AdminWorkspace from "./components/AdminWorkspace.jsx";
 import { DeleteCategoryDialog } from "./components/PublicContentManager.jsx";
@@ -40,7 +39,6 @@ import GlobalSearch from "./components/GlobalSearch.jsx";
 import RecognitionResultDialog from "./components/RecognitionResultDialog.jsx";
 import ResourceOverview from "./components/ResourceOverview.jsx";
 import { browserPreference } from "./utils/browserPreference.js";
-import NotificationCenter from "./components/NotificationCenter.jsx";
 import AiWorkspace,{launchAiWorkspace}from"./components/AiWorkspace.jsx";
 
 const validView = (value) => {
@@ -241,7 +239,6 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     [publicEditMode, setPublicEditMode] = useState(false),
     [personalEditMode, setPersonalEditMode] = useState(false),
     [editingItem, setEditingItem] = useState(null),
-    [showPublicAi, setShowPublicAi] = useState(false),
     [showPersonalTools, setShowPersonalTools] = useState(false),
     [personalToolsTab, setPersonalToolsTab] = useState("share"),
     [checkingAll, setCheckingAll] = useState(false),
@@ -293,7 +290,6 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     setPublicEditMode(false);
     setPersonalEditMode(false);
     setEditingItem(null);
-    setShowPublicAi(false);
     setChecking(new Set());
     setDeleteImpact(null);
     setSelectedIds(new Set());
@@ -453,7 +449,6 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     setPublicEditMode(false);
     setPersonalEditMode(false);
     setEditingItem(null);
-    setShowPublicAi(false);
     setDeleteImpact(null);
     setChecking(new Set());
     setSelectedIds(new Set());
@@ -891,7 +886,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
           />
         </div>
         <div className="topbar-actions">
-          <button className="icon-btn ai-workspace-entry" onClick={()=>{const category=categories.find(item=>item.id===activeCategory);launchAiWorkspace({scope:space,section:'chat',text:category?(locale==='en'?`Analyze the current category “${category.path_label||category.name}” and suggest improvements before creating any plan.`:`请先分析当前分类「${category.path_label||category.name}」的结构和资源，给出优化建议，暂时不要执行修改。`):''});}}><Icon name="assistant" size={16}/>{locale==='en'?'AI Workspace':'AI 工作台'}</button>
+          <button className="icon-btn ai-workspace-entry" onClick={()=>{const category=categories.find(item=>item.id===activeCategory);launchAiWorkspace({scope:space,text:category?(locale==='en'?`Analyze the current category “${category.path_label||category.name}” and suggest improvements before creating any plan.`:`请先分析当前分类「${category.path_label||category.name}」的结构和资源，给出优化建议，暂时不要执行修改。`):''});}}><Icon name="assistant" size={16}/>{locale==='en'?'AI Workspace':'AI 工作台'}</button>
           {canUseSpaceTools && (
             <button
               className="icon-btn"
@@ -928,7 +923,15 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
                 <button
                   className="icon-btn"
                   disabled={recognizing}
-                  onClick={() => setShowPublicAi(true)}
+                  onClick={() => {
+                    const category = categories.find((item) => item.id === activeCategory);
+                    launchAiWorkspace({
+                      scope: "public",
+                      text: locale === "en"
+                        ? `Help me add resources${category ? ` under “${category.path_label || category.name}”` : ""}. First clarify and organize the information, then create a plan for my approval.`
+                        : `帮我${category ? `在「${category.path_label || category.name}」分类下` : ""}添加资源。请先帮我梳理信息，再生成需要我确认的执行方案。`,
+                    });
+                  }}
                 >
                   <Icon name="assistant" size={16} />
                   {t("nav.aiAdd")}
@@ -944,7 +947,6 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
               </button>
             </>
           )}
-          {auth.authenticated && <NotificationCenter />}
           <AccountMenu disabled={recognizing} />
           <LocaleSwitcher />
           <ThemeSwitcher theme={theme} onChange={onThemeChange} />
@@ -986,7 +988,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
               setPersonalToolsTab("share");
               setShowPersonalTools(true);
             }}
-            onAi={()=>{const names=items.filter(item=>selectedIds.has(item.id)).slice(0,30).map(item=>`「${item.name}」`).join('、');launchAiWorkspace({scope:space,section:'chat',text:locale==='en'?`Analyze these selected resources and discuss how they should be categorized, tagged, or improved before creating a plan: ${names}`:`请分析我选中的这些资源，先讨论它们应该如何分类、打标签或完善信息，确认后再生成方案：${names}`});}}
+            onAi={()=>{const names=items.filter(item=>selectedIds.has(item.id)).slice(0,30).map(item=>`「${item.name}」`).join('、');launchAiWorkspace({scope:space,text:locale==='en'?`Analyze these selected resources and discuss how they should be categorized, tagged, or improved before creating a plan: ${names}`:`请分析我选中的这些资源，先讨论它们应该如何分类、打标签或完善信息，确认后再生成方案：${names}`});}}
             onMove={() =>
               moveItems(
                 [...selectedIds],
@@ -1107,16 +1109,6 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
           onConfirm={confirmDelete}
         />
       )}{" "}
-      {showPublicAi && (
-        <AiAddModal
-          onClose={() => setShowPublicAi(false)}
-          onCreated={async () => {
-            setShowPublicAi(false);
-            toastMessage(t("toast.saved"));
-            await load();
-          }}
-        />
-      )}
       {showPersonalTools && (
         <PersonalToolsModal
           scope={space}
@@ -1141,10 +1133,6 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
         aiPersonalEnabled={Boolean(publicSettings.ai_personal_enabled)}
         activeSpace={space}
         launchRequest={assistantRequest}
-        onResourcesChanged={async (changedScope) => {
-          toastMessage(t("toast.saved"));
-          if (space === changedScope) await load();
-        }}
       />
       {toast && <div className="toast">{toast}</div>}
     </div>

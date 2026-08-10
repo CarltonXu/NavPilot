@@ -20,6 +20,13 @@ test('AI advisory discussions are separate from approval-gated public plans',asy
   assert.equal(result.response.status,201);assert.match(result.body.answer,/建议下一步/);assert.ok(result.body.conversationId);
   assert.equal(db.prepare('SELECT COUNT(*) n FROM ai_messages WHERE conversation_id=?').get(result.body.conversationId).n,2);
 
+  const streamedResponse=await fetch(`${base}/api/ai/public/discussions/stream`,{method:'POST',headers:{'Content-Type':'application/json',cookie:`navpilot_session=${session.rawToken}`},body:JSON.stringify({text:'流式讨论分类',locale:'zh-CN'})});
+  assert.equal(streamedResponse.status,200);assert.match(streamedResponse.headers.get('content-type'),/application\/x-ndjson/);
+  const events=(await streamedResponse.text()).trim().split('\n').map(line=>JSON.parse(line));
+  assert.deepEqual(events.map(event=>event.type),['meta','delta','done']);
+  assert.match(events.find(event=>event.type==='delta').content,/建议下一步/);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM ai_messages WHERE conversation_id=?').get(events[0].conversationId).n,2);
+
   result=await request('/api/ai/public/plans',{text:'创建分类'});
   assert.equal(result.response.status,403);
   result=await request('/api/ai/personal/discussions',{text:'讨论个人分类'});

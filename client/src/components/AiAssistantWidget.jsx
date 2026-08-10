@@ -3,7 +3,6 @@ import { api } from "../api.js";
 import { useAuth } from "../auth/AuthContext.jsx";
 import { useI18n } from "../i18n/LocaleContext.jsx";
 import Icon, { ContentIcon } from "./Icon.jsx";
-import AiCommandPanel from "./AiCommandPanel.jsx";
 import { possibleURL } from "../utils/urlSuggestion.js";
 import { launchAiWorkspace } from "./AiWorkspace.jsx";
 
@@ -11,47 +10,34 @@ export default function AiAssistantWidget({
   aiPersonalEnabled,
   activeSpace = "public",
   launchRequest,
-  onResourcesChanged,
 }) {
   const auth = useAuth();
   const { t, locale } = useI18n();
-  const [open, setOpen] = useState(false),
-    [tab, setTab] = useState("search"),
-    [query, setQuery] = useState(""),
-    [results, setResults] = useState([]),
-    [searching, setSearching] = useState(false),
-    [active, setActive] = useState(-1),
-    [viewport, setViewport] = useState(null),
-    [operationScope, setOperationScope] = useState("personal"),
-    [operationText, setOperationText] = useState(""),
-    [editorVersion, setEditorVersion] = useState(0);
-  const inputRef = useRef(null),
-    triggerRef = useRef(null),
-    requestRef = useRef(0);
+  const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState("search");
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [active, setActive] = useState(-1);
+  const [viewport, setViewport] = useState(null);
+  const [askScope, setAskScope] = useState("personal");
+  const [askText, setAskText] = useState("");
+  const inputRef = useRef(null);
+  const triggerRef = useRef(null);
+  const requestRef = useRef(0);
+
   const close = useCallback(() => {
     setOpen(false);
     triggerRef.current?.focus();
   }, []);
   const chooseDefaultScope = useCallback(
-    (requested) =>
-      requested === "public" && auth.isAdmin ? "public" : "personal",
-    [auth.isAdmin],
-  );
-  const beginOperation = useCallback(
-    (scope, text = "") => {
-      setOperationScope(chooseDefaultScope(scope));
-      setOperationText(text);
-      setEditorVersion((value) => value + 1);
-      setTab("operate");
-      setOpen(true);
-    },
-    [chooseDefaultScope],
+    (requested) => requested === "public" ? "public" : "personal",
+    [],
   );
 
   useEffect(() => {
     function key(event) {
-      const shortcut =
-        (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j";
+      const shortcut = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j";
       if (shortcut && !event.isComposing) {
         event.preventDefault();
         setOpen(true);
@@ -65,6 +51,7 @@ export default function AiAssistantWidget({
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [open, close]);
+
   useEffect(() => {
     if (!open || !window.visualViewport) {
       setViewport(null);
@@ -87,10 +74,15 @@ export default function AiAssistantWidget({
       window.visualViewport.removeEventListener("scroll", update);
     };
   }, [open]);
+
   useEffect(() => {
     if (!launchRequest?.id) return;
-    beginOperation(launchRequest.scope, launchRequest.text || "");
-  }, [launchRequest, beginOperation]);
+    launchAiWorkspace({
+      scope: chooseDefaultScope(launchRequest.scope),
+      text: launchRequest.text || "",
+    });
+  }, [launchRequest, chooseDefaultScope]);
+
   useEffect(() => {
     if (!open || tab !== "search" || !query.trim()) {
       setResults([]);
@@ -100,8 +92,7 @@ export default function AiAssistantWidget({
     const id = ++requestRef.current;
     const timer = setTimeout(() => {
       setSearching(true);
-      api
-        .searchItems(query.trim())
+      api.searchItems(query.trim())
         .then((items) => {
           if (id === requestRef.current) {
             setResults(items);
@@ -119,15 +110,14 @@ export default function AiAssistantWidget({
   }, [query, open, tab]);
 
   function openResult(item, position) {
-    api
-      .clickItem(item.id, {
-        surface: "assistant-search",
-        viewMode: "assistant",
-        position,
-        eventId: `${Date.now()}-${item.id}-${Math.random().toString(36).slice(2)}`,
-      })
-      .catch(() => {});
+    api.clickItem(item.id, {
+      surface: "assistant-search",
+      viewMode: "assistant",
+      position,
+      eventId: `${Date.now()}-${item.id}-${Math.random().toString(36).slice(2)}`,
+    }).catch(() => {});
   }
+
   function searchKey(event) {
     if (event.key === "ArrowDown") {
       event.preventDefault();
@@ -142,6 +132,7 @@ export default function AiAssistantWidget({
       window.open(results[active].url, "_blank", "noopener,noreferrer");
     }
   }
+
   function createFromSearch() {
     const url = possibleURL(query);
     if (!url) return;
@@ -151,49 +142,38 @@ export default function AiAssistantWidget({
       return;
     }
     let name = query;
-    try {
-      name = new URL(url).host;
-    } catch {
-      /* keep query */
-    }
-    const scope =
-      activeSpace === "public" && auth.isAdmin ? "public" : "personal";
-    beginOperation(
+    try { name = new URL(url).host; } catch { /* keep query */ }
+    const scope = activeSpace === "public" && auth.isAdmin ? "public" : "personal";
+    launchAiWorkspace({
       scope,
-      t("searchSuggestion.prompt", {
+      text: t("searchSuggestion.prompt", {
         space: t(scope === "public" ? "space.public" : "space.personal"),
         name,
         url,
       }),
-    );
+    });
+  }
+
+  function openWorkspace() {
+    if (!auth.authenticated) {
+      close();
+      auth.setLoginOpen(true);
+      return;
+    }
+    launchAiWorkspace({ scope: askScope, text: askText.trim() });
   }
 
   const urlSuggestion = possibleURL(query);
-  const operationGate = !auth.authenticated ? (
+  const askGate = !auth.authenticated ? (
     <div className="assistant-gate">
       <Icon name="user" size={36} />
       <h4>{t("assistant.loginTitle")}</h4>
       <p>{t("assistant.loginDesc")}</p>
-      <button
-        className="icon-btn primary"
-        onClick={() => {
-          close();
-          auth.setLoginOpen(true);
-        }}
-      >
-        {t("auth.login")}
-      </button>
+      <button className="icon-btn primary" onClick={() => { close(); auth.setLoginOpen(true); }}>{t("auth.login")}</button>
     </div>
   ) : auth.user.mustChangePassword ? (
-    <div className="assistant-gate">
-      <h4>{t("auth.changeRequired")}</h4>
-    </div>
-  ) : operationScope === "public" && !auth.isAdmin ? (
-    <div className="assistant-gate">
-      <Icon name="shield" size={36} />
-      <h4>{t("auth.forbidden")}</h4>
-    </div>
-  ) : operationScope === "personal" && !aiPersonalEnabled ? (
+    <div className="assistant-gate"><h4>{t("auth.changeRequired")}</h4></div>
+  ) : askScope === "personal" && !aiPersonalEnabled ? (
     <div className="assistant-gate">
       <Icon name="assistant" size={36} />
       <h4>{t("assistant.disabledTitle")}</h4>
@@ -203,200 +183,75 @@ export default function AiAssistantWidget({
 
   return (
     <div className="ai-widget">
-      <button
-        ref={triggerRef}
-        className="ai-widget-fab"
-        onClick={() => setOpen((value) => !value)}
-        aria-label={t("assistant.open")}
-      >
+      <button ref={triggerRef} className="ai-widget-fab" onClick={() => setOpen((value) => !value)} aria-label={t("assistant.open")}>
         <Icon name="assistant" size={25} />
         <span className="shortcut-badge">AI</span>
       </button>
       {open && (
         <div
           className="assistant-backdrop"
-          style={
-            viewport
-              ? {
-                  left: viewport.left,
-                  top: viewport.top,
-                  width: viewport.width,
-                  height: viewport.height,
-                  right: "auto",
-                  bottom: "auto",
-                }
-              : undefined
-          }
-          onMouseDown={(event) =>
-            event.target === event.currentTarget && close()
-          }
+          style={viewport ? { left: viewport.left, top: viewport.top, width: viewport.width, height: viewport.height, right: "auto", bottom: "auto" } : undefined}
+          onMouseDown={(event) => event.target === event.currentTarget && close()}
         >
-          <section
-            className="ai-widget-panel assistant-command"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="assistant-title"
-          >
+          <section className="ai-widget-panel assistant-command" role="dialog" aria-modal="true" aria-labelledby="assistant-title">
             <header className="ai-widget-header">
-              <div className="assistant-avatar">
-                <Icon name="assistant" size={24} />
-              </div>
-              <div>
-                <strong id="assistant-title">{t("assistant.title")}</strong>
-                <small>{t("assistant.subtitle")}</small>
-              </div>
+              <div className="assistant-avatar"><Icon name="assistant" size={24} /></div>
+              <div><strong id="assistant-title">{t("assistant.title")}</strong><small>{t("assistant.subtitle")}</small></div>
               <kbd>⌘/Ctrl J</kbd>
-              <button className="mini-btn assistant-expand" title={locale==='en'?'Open AI Workspace':'进入 AI 工作台'} onClick={()=>launchAiWorkspace({scope:tab==='operate'?operationScope:chooseDefaultScope(activeSpace),text:tab==='operate'?operationText:query,section:'chat'})}><Icon name="grid" size={14}/></button>
-              <button
-                className="mini-btn"
-                aria-label={t("common.close")}
-                onClick={close}
-              >
-                ×
+              <button className="mini-btn assistant-expand" title={locale === "en" ? "Open AI Workspace" : "进入 AI 工作台"} onClick={() => launchAiWorkspace({ scope: tab === "ask" ? askScope : chooseDefaultScope(activeSpace), text: tab === "ask" ? askText : query })}>
+                <Icon name="grid" size={14} />
               </button>
+              <button className="mini-btn" aria-label={t("common.close")} onClick={close}>×</button>
             </header>
             <div className="tabs ai-widget-tabs" role="tablist">
-              <button
-                role="tab"
-                aria-selected={tab === "search"}
-                className={tab === "search" ? "active" : ""}
-                onClick={() => setTab("search")}
-              >
-                <Icon name="search" size={15} />
-                {t("assistant.search")}
+              <button role="tab" aria-selected={tab === "search"} className={tab === "search" ? "active" : ""} onClick={() => setTab("search")}>
+                <Icon name="search" size={15} />{t("assistant.search")}
               </button>
-              <button
-                role="tab"
-                aria-selected={tab === "operate"}
-                className={tab === "operate" ? "active" : ""}
-                onClick={() => {
-                  setTab("operate");
-                  setOperationScope(chooseDefaultScope(activeSpace));
-                }}
-              >
-                <Icon name="assistant" size={15} />
-                {t("assistant.operate")}
+              <button role="tab" aria-selected={tab === "ask"} className={tab === "ask" ? "active" : ""} onClick={() => { setTab("ask"); setAskScope(chooseDefaultScope(activeSpace)); }}>
+                <Icon name="assistant" size={15} />{locale === "en" ? "Ask AI" : "询问 AI"}
               </button>
             </div>
             {tab === "search" && (
               <div className="ai-widget-body assistant-body" role="tabpanel">
                 <div className="assistant-search">
                   <Icon name="search" size={17} />
-                  <input
-                    ref={inputRef}
-                    autoFocus
-                    aria-label={t("assistant.search")}
-                    placeholder={t(
-                      auth.authenticated
-                        ? "assistant.searchAll"
-                        : "assistant.searchPublic",
-                    )}
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    onKeyDown={searchKey}
-                  />
+                  <input ref={inputRef} autoFocus aria-label={t("assistant.search")} placeholder={t(auth.authenticated ? "assistant.searchAll" : "assistant.searchPublic")} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={searchKey} />
                 </div>
-                <div className="assistant-scope">
-                  {t(
-                    auth.authenticated
-                      ? "assistant.scopeAll"
-                      : "assistant.scopePublic",
-                  )}
-                </div>
+                <div className="assistant-scope">{t(auth.authenticated ? "assistant.scopeAll" : "assistant.scopePublic")}</div>
                 <div className="ai-widget-results" role="listbox">
-                  {searching && (
-                    <div className="assistant-empty">{t("ai.searching")}</div>
-                  )}
+                  {searching && <div className="assistant-empty">{t("ai.searching")}</div>}
                   {!searching && query && !results.length && (
                     <div className="assistant-empty assistant-search-empty">
                       <span>{t("ai.noResults")}</span>
-                      {urlSuggestion && (
-                        <>
-                          <small>
-                            {t("searchSuggestion.url", { url: urlSuggestion })}
-                          </small>
-                          <button
-                            className="icon-btn primary"
-                            onClick={createFromSearch}
-                          >
-                            <Icon name="plus" size={14} />
-                            {t("searchSuggestion.createWithAssistant")}
-                          </button>
-                        </>
-                      )}
+                      {urlSuggestion && <><small>{t("searchSuggestion.url", { url: urlSuggestion })}</small><button className="icon-btn primary" onClick={createFromSearch}><Icon name="plus" size={14} />{t("searchSuggestion.createWithAssistant")}</button></>}
                     </div>
                   )}
                   {results.map((item, index) => (
-                    <a
-                      role="option"
-                      aria-selected={active === index}
-                      className={`assistant-result ${active === index ? "active" : ""}`}
-                      key={`${item.scope}-${item.id}`}
-                      href={item.url}
-                      onClick={() => openResult(item, index + 1)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      <span className="assistant-result-icon">
-                        <ContentIcon value={item.icon} />
-                      </span>
-                      <span className="meta">
-                        <strong>{item.name}</strong>
-                        <small>{item.categoryName || item.url}</small>
-                      </span>
-                      <span className={`scope-chip ${item.scope}`}>
-                        {t(
-                          item.scope === "personal"
-                            ? "space.personal"
-                            : "space.public",
-                        )}
-                      </span>
+                    <a role="option" aria-selected={active === index} className={`assistant-result ${active === index ? "active" : ""}`} key={`${item.scope}-${item.id}`} href={item.url} onClick={() => openResult(item, index + 1)} target="_blank" rel="noopener noreferrer">
+                      <span className="assistant-result-icon"><ContentIcon value={item.icon} /></span>
+                      <span className="meta"><strong>{item.name}</strong><small>{item.categoryName || item.url}</small></span>
+                      <span className={`scope-chip ${item.scope}`}>{t(item.scope === "personal" ? "space.personal" : "space.public")}</span>
                     </a>
                   ))}
                 </div>
-                <div className="sr-live" aria-live="polite">
-                  {searching
-                    ? t("ai.searching")
-                    : t("assistant.resultCount", { count: results.length })}
-                </div>
+                <div className="sr-live" aria-live="polite">{searching ? t("ai.searching") : t("assistant.resultCount", { count: results.length })}</div>
               </div>
             )}
-            {tab === "operate" && (
-              <div
-                className="ai-widget-body assistant-body assistant-operation-body"
-                role="tabpanel"
-              >
+            {tab === "ask" && (
+              <div className="ai-widget-body assistant-body assistant-operation-body" role="tabpanel">
                 <div className="assistant-scope-switch">
                   <span>{t("assistant.targetSpace")}</span>
                   <div>
-                    {auth.isAdmin && (
-                      <button
-                        className={operationScope === "public" ? "active" : ""}
-                        onClick={() => {
-                          setOperationScope("public");
-                          setOperationText("");
-                          setEditorVersion((value) => value + 1);
-                        }}
-                      >
-                        <Icon name="building" size={14} />
-                        {t("space.public")}
-                      </button>
-                    )}
-                    <button
-                      className={operationScope === "personal" ? "active" : ""}
-                      onClick={() => {
-                        setOperationScope("personal");
-                        setOperationText("");
-                        setEditorVersion((value) => value + 1);
-                      }}
-                    >
-                      <Icon name="user" size={14} />
-                      {t("space.personal")}
-                    </button>
+                    <button className={askScope === "public" ? "active" : ""} onClick={() => setAskScope("public")}><Icon name="building" size={14} />{t("space.public")}</button>
+                    <button className={askScope === "personal" ? "active" : ""} onClick={() => setAskScope("personal")}><Icon name="user" size={14} />{t("space.personal")}</button>
                   </div>
                 </div>
-                {operationGate || (
-                  <><div className="assistant-workspace-prompt"><div><Icon name="grid" size={16}/><span><strong>{locale==='en'?'Need more room?':'需要复杂规划？'}</strong><small>{locale==='en'?'Discuss ideas, preview taxonomy trees, and review task history in AI Workspace.':'在 AI 工作台讨论想法、预览分类树并查看任务历史。'}</small></span></div><button className="text-btn" onClick={()=>launchAiWorkspace({scope:operationScope,text:operationText,section:'chat'})}>{locale==='en'?'Open workspace':'进入工作台'}<Icon name="chevronRight" size={13}/></button></div><AiCommandPanel key={`${operationScope}-${editorVersion}`} scope={operationScope} initialText={operationText} compact onExecuted={(result)=>onResourcesChanged?.(operationScope,result)}/></>
+                {askGate || (
+                  <div className="assistant-ask-launcher">
+                    <textarea className="ai-textarea assistant-textarea" value={askText} onChange={(event) => setAskText(event.target.value)} placeholder={locale === "en" ? "Describe an idea, question, or resource operation…" : "描述一个想法、问题或资源操作……"} />
+                    <p>{locale === "en" ? "Complex analysis and all resource changes continue in AI Workspace. Nothing runs without your approval." : "复杂分析和资源修改统一在 AI 工作台完成，未经你的确认不会执行。"}</p>
+                    <button className="icon-btn primary assistant-primary" disabled={!askText.trim()} onClick={openWorkspace}>{locale === "en" ? "Continue in AI Workspace" : "进入 AI 工作台"}<Icon name="chevronRight" size={14} /></button>
+                  </div>
                 )}
               </div>
             )}

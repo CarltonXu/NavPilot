@@ -3,7 +3,8 @@ const assert = require("node:assert/strict");
 process.env.NAVPILOT_DB_PATH = ":memory:";
 const db = require("../src/db");
 const axios = require('axios');
-const { extractJson, normalizeEnvelope, parseCommands, parsePlan, requestCommandsWithConfig, requestDiscussionWithConfig } = require("../src/services/ai/openAiCompatibleProvider");
+const { Readable } = require('node:stream');
+const { extractJson, normalizeEnvelope, parseCommands, parsePlan, requestCommandsWithConfig, requestDiscussionWithConfig, requestDiscussionStreamWithConfig } = require("../src/services/ai/openAiCompatibleProvider");
 
 test("AI provider extracts embedded arrays and normalizes compatible envelopes", () => {
   assert.deepEqual(extractJson("<think>ignore</think> result: ```json\n[{\"op\":\"item.delete\",\"item\":\"Old\"}]\n```"), [{ op:"item.delete", item:"Old" }]);
@@ -66,5 +67,23 @@ test('AI discussion returns advisory text without requiring an executable comman
   });
   assert.match(result.answer,/建议下一步/);
   assert.equal(result.model,'advisor');
+});
+test('AI discussion streams compatible SSE deltas as they arrive',async(t)=>{
+  t.mock.method(axios,'post',async(_url,body,options)=>{
+    assert.equal(body.stream,true);assert.equal(options.responseType,'stream');
+    return{data:Readable.from([
+      'data: {"choices":[{"delta":{"content":"建议先"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"统一分类。"}}]}\n\n',
+      'data: {"choices":[],"usage":{"prompt_tokens":8,"total_tokens":12}}\n\n',
+      'data: [DONE]\n\n',
+    ])};
+  });
+  const deltas=[];
+  const result=await requestDiscussionStreamWithConfig('讨论分类',{context:{resourceCount:3,resources:[],categories:[]},onDelta:value=>deltas.push(value)}, {
+    baseURL:'https://ai.example/v1',apiKey:'secret',model:'stream-model',requestTimeoutMs:60000,
+  });
+  assert.deepEqual(deltas,['建议先','统一分类。']);
+  assert.equal(result.answer,'建议先统一分类。');
+  assert.equal(result.model,'stream-model');
 });
 test.after(()=>db.close());

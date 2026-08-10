@@ -1,6 +1,5 @@
 const cron = require('node-cron');
 const { checkAllItems } = require('./services/healthCheck');
-const { runProactiveReports } = require('./services/ai/proactiveReportService');
 
 function startCron() {
   const enabled = String(process.env.AUTO_CHECK_ENABLED || 'true') === 'true';
@@ -17,8 +16,6 @@ function startCron() {
     console.log(`[cron] 已启动定时探测，每 ${minutes} 分钟一次`);
     checkAllItems().then((r) => console.log(`[cron] 启动即时探测完成 total=${r.total}`));
   }
-  cron.schedule(process.env.AI_REPORT_CRON || '0 9 * * 1',()=>{const result=runProactiveReports();console.log(`[cron] AI 整理报告 created=${result.created||0}`);});
-  console.log('[cron] 已启动每周 AI 整理报告调度');
 }
 
 module.exports = { startCron };

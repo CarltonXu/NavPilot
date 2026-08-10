@@ -25,7 +25,7 @@ function cleanProfile(body){
   const email=String(body.email||'').trim().toLowerCase();if(email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw profileError('INVALID_EMAIL','邮箱格式无效');
   const input=body.preferences&&typeof body.preferences==='object'&&!Array.isArray(body.preferences)?body.preferences:{};
   const requestedView=['dense','board'].includes(input.viewMode)?'overview':input.viewMode;
-  const preferences={theme:['dark','light','midnight','eyecare'].includes(input.theme)?input.theme:'dark',locale:['zh-CN','en'].includes(input.locale)?input.locale:'zh-CN',viewMode:['card','compact','overview'].includes(requestedView)?requestedView:'card',defaultSpace:['public','personal'].includes(input.defaultSpace)?input.defaultSpace:'public',aiReportsEnabled:input.aiReportsEnabled!==false};
+  const preferences={theme:['dark','light','midnight','eyecare'].includes(input.theme)?input.theme:'dark',locale:['zh-CN','en'].includes(input.locale)?input.locale:'zh-CN',viewMode:['card','compact','overview'].includes(requestedView)?requestedView:'card',defaultSpace:['public','personal'].includes(input.defaultSpace)?input.defaultSpace:'public'};
   return{displayName,avatarUrl,phone,email,preferences};
 }
 router.get('/profile',requireUser,(req,res)=>res.json({user:sanitizeUser(db.prepare('SELECT * FROM users WHERE id=?').get(req.auth.user.id))}));

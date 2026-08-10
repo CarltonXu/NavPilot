@@ -240,7 +240,7 @@ async function testAiConnection(input = {}) {
 function getAdminSettingsView() {
   const config = getEffectiveAiConfig(), aiModels = getAiModelsView();
   return {
-    aiPersonalEnabled:getSetting('ai_personal_enabled','false') === 'true', proactiveReportsEnabled:getSetting('ai_proactive_reports_enabled','false') === 'true', embedding:embeddingView(),
+    aiPersonalEnabled:getSetting('ai_personal_enabled','false') === 'true', embedding:embeddingView(),
     branding:getBrandingSettings(), aiModels:aiModels.models, defaultAiModelId:aiModels.defaultId,
     ai:{ baseURL:{value:config.baseURL,source:config.sources.baseURL}, model:{value:config.model,source:config.sources.model}, apiKey:{configured:Boolean(config.apiKey),source:config.sources.apiKey,maskedSuffix:maskApiKey(config.apiKey)} },
   };
@@ -250,10 +250,6 @@ function validateSettingsUpdate(input = {}) {
   if (Object.prototype.hasOwnProperty.call(input,'aiPersonalEnabled')) {
     if (typeof input.aiPersonalEnabled !== 'boolean') throw validationError('INVALID_AI_PERSONAL_ENABLED','个人空间 AI 开关必须是布尔值');
     updates.aiPersonalEnabled = input.aiPersonalEnabled;
-  }
-  if (Object.prototype.hasOwnProperty.call(input,'proactiveReportsEnabled')) {
-    if (typeof input.proactiveReportsEnabled !== 'boolean') throw validationError('INVALID_PROACTIVE_REPORTS_ENABLED','主动整理报告开关必须是布尔值');
-    updates.proactiveReportsEnabled=input.proactiveReportsEnabled;
   }
   if (input.branding !== undefined) {
     if (!input.branding || typeof input.branding !== 'object' || Array.isArray(input.branding)) throw validationError('INVALID_BRANDING_SETTINGS','品牌设置格式无效');
@@ -280,7 +276,6 @@ function updateSystemSettings(input) {
   const updates = validateSettingsUpdate(input);
   db.transaction(() => {
     if (Object.prototype.hasOwnProperty.call(updates,'aiPersonalEnabled')) setSetting('ai_personal_enabled',updates.aiPersonalEnabled?'true':'false');
-    if (Object.prototype.hasOwnProperty.call(updates,'proactiveReportsEnabled')) setSetting('ai_proactive_reports_enabled',updates.proactiveReportsEnabled?'true':'false');
     if (updates.branding) for (const [field,value] of Object.entries(updates.branding)) setSetting(BRANDING_KEYS[field],value);
     for (const field of ['baseURL','model','apiKey']) if (Object.prototype.hasOwnProperty.call(updates,field)) updates[field] === null ? deleteSetting(AI_SETTING_KEYS[field]) : setSetting(AI_SETTING_KEYS[field],field==='apiKey'?sealSecret(updates[field]):updates[field]);
   })();
