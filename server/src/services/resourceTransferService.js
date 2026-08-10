@@ -254,7 +254,7 @@ function importNormalized(
   db,
   userId,
   input,
-  { selectedKeys, targetCategoryId = null, preserveStructure = true } = {},
+  { selectedKeys, targetCategoryId = null, preserveStructure = true, returnIds = false } = {},
 ) {
   const data = normalizeNavpilot(input),
     selected = new Set(
@@ -339,6 +339,7 @@ function importNormalized(
     [...needed].forEach(ensure);
     let imported = 0,
       skipped = 0;
+    const importedIds = [];
     for (const item of selectedItems) {
       const fingerprint = item.url.toLowerCase();
       if (existing.has(fingerprint)) {
@@ -351,7 +352,7 @@ function importNormalized(
             "SELECT COALESCE(MAX(sort_order),-1) max FROM items WHERE scope='personal' AND owner_id=? AND category_id IS ?",
           )
           .get(userId, categoryId).max;
-      db.prepare(
+      const importedId = Number(db.prepare(
         "INSERT INTO items(name,url,icon,description,tags_json,category_id,sort_order,check_method,check_target,check_enabled,scope,owner_id,version,updated_at) VALUES(?,?,?,?,?,?,?, ?,NULL,0,'personal',?,1,datetime('now'))",
       ).run(
         item.name,
@@ -363,7 +364,8 @@ function importNormalized(
         max + 1,
         item.checkMethod === "http" ? "http" : "none",
         userId,
-      );
+      ).lastInsertRowid);
+      importedIds.push(importedId);
       existing.add(fingerprint);
       imported += 1;
     }
@@ -371,6 +373,7 @@ function importNormalized(
       imported,
       skipped,
       categoriesCreated: new Set(categoryMap.values()).size,
+      ...(returnIds ? { importedIds } : {}),
     };
   })();
   return result;

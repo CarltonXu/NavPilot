@@ -18,7 +18,8 @@ function realm(scope, ownerId = null) {
 function normalizeUrl(value) {
   let parsed;
   try {
-    parsed = new URL(String(value || "").trim());
+    const raw = String(value || "").trim();
+    parsed = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
   } catch {
     throw domainError("INVALID_ITEM_URL", "链接格式无效");
   }

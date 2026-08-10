@@ -111,14 +111,65 @@ export default function ItemFormModal({
   }
   async function submit(event) {
     event.preventDefault();
-    if (!form.name.trim() || !form.url.trim()) {
-      setError(t("item.required"));
-      return;
-    }
     setSaving(true);
     setError("");
     try {
-      const { tagsText, ...fields } = form;
+      let submission = { ...form };
+      if (!isEdit && submission.url.trim()) {
+        try {
+          let metadata = null;
+          if (activeInspection.current) metadata = await activeInspection.current;
+          else if (lastInspectedUrl.current !== submission.url.trim()) {
+            setMetadataLoading(true);
+            metadata = await api.inspectItemUrl(scope, submission.url.trim());
+          }
+          if (metadata) {
+            submission = {
+              ...submission,
+              url: metadata.url || submission.url,
+              name:
+                metadata.name &&
+                (!submission.name.trim() || !dirtyFields.current.has("name"))
+                  ? metadata.name
+                  : submission.name,
+              description:
+                metadata.description &&
+                (!submission.description.trim() ||
+                  !dirtyFields.current.has("description"))
+                  ? metadata.description
+                  : submission.description,
+              icon:
+                metadata.icon && !dirtyFields.current.has("icon")
+                  ? metadata.icon
+                  : submission.icon,
+            };
+            lastInspectedUrl.current = form.url.trim();
+            setForm(submission);
+            setMetadataMessage(metadataWords.success);
+          }
+        } catch {
+          /* Metadata failure must not prevent a valid manual resource create. */
+        } finally {
+          setMetadataLoading(false);
+        }
+        try {
+          const parsed = new URL(
+            /^https?:\/\//i.test(submission.url.trim())
+              ? submission.url.trim()
+              : `https://${submission.url.trim()}`,
+          );
+          submission.url = parsed.toString();
+          if (!submission.name.trim())
+            submission.name = parsed.hostname.replace(/^www\./i, "");
+        } catch {
+          /* The API will return the localized URL validation error. */
+        }
+      }
+      if (!submission.name.trim() || !submission.url.trim()) {
+        setError(t("item.required"));
+        return;
+      }
+      const { tagsText, ...fields } = submission;
       await onSubmit({
         ...fields,
         tags: [
@@ -129,8 +180,9 @@ export default function ItemFormModal({
               .filter(Boolean),
           ),
         ],
-        category_id: form.category_id === "" ? null : Number(form.category_id),
-        check_enabled: form.check_enabled ? 1 : 0,
+        category_id:
+          submission.category_id === "" ? null : Number(submission.category_id),
+        check_enabled: submission.check_enabled ? 1 : 0,
       });
     } catch (err) {
       setError(errorMessage(err));

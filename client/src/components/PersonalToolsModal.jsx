@@ -38,6 +38,9 @@ const words = {
     selectAll: "选择全部可导入资源",
     importNow: "导入选中资源",
     imported: "成功导入 {count} 个，跳过 {skipped} 个重复资源",
+    importRecognizing: "正在自动识别网站 {processed}/{total} · 成功 {updated} · 失败 {failed}",
+    importRecognizingShort: "正在导入并识别…",
+    importedRecognized: "成功导入 {count} 个，跳过 {skipped} 个重复资源；网站识别成功 {updated} 个，失败 {failed} 个",
     exportRange: "选择导出范围",
     download: "下载 JSON",
     sentOk: "共享请求已发送",
@@ -107,6 +110,9 @@ const words = {
     selectAll: "Select all importable items",
     importNow: "Import selected",
     imported: "Imported {count}; skipped {skipped} duplicates",
+    importRecognizing: "Identifying websites {processed}/{total} · {updated} succeeded · {failed} failed",
+    importRecognizingShort: "Importing and identifying…",
+    importedRecognized: "Imported {count}; skipped {skipped} duplicates; identified {updated}, failed {failed}",
     exportRange: "Choose export scope",
     download: "Download JSON",
     sentOk: "Sharing request sent",
@@ -382,6 +388,7 @@ export default function PersonalToolsModal({
   const [chosen, setChosen] = useState(new Set());
   const [target, setTarget] = useState("");
   const [preserve, setPreserve] = useState(true);
+  const [importProgress, setImportProgress] = useState(null);
   const categoryOptions = useMemo(
     () =>
       categories.map((category) => (
@@ -402,6 +409,15 @@ export default function PersonalToolsModal({
   useEffect(() => {
     loadShares();
   }, []);
+  useEffect(() => {
+    if (!importProgress) return undefined;
+    const preventLeave = (event) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", preventLeave);
+    return () => window.removeEventListener("beforeunload", preventLeave);
+  }, [importProgress]);
 
   function body() {
     if (mode === "directory" && !categoryIds.size)
@@ -412,6 +428,7 @@ export default function PersonalToolsModal({
     setLoading(true);
     setError("");
     setMessage("");
+    setImportProgress(null);
     try {
       await api.createShare({
         recipients: recipients
@@ -519,10 +536,33 @@ export default function PersonalToolsModal({
         targetCategoryId: target ? Number(target) : null,
         preserveStructure: preserve,
       });
+      const importedIds = Array.isArray(result.importedIds)
+        ? result.importedIds
+        : [];
+      let processed = 0,
+        updated = 0,
+        failed = 0;
+      if (importedIds.length) {
+        setImportProgress({ processed, total: importedIds.length, updated, failed });
+        for (let offset = 0; offset < importedIds.length; offset += 12) {
+          const chunk = importedIds.slice(offset, offset + 12);
+          try {
+            const recognition = await api.bulkInspectItems("personal", chunk);
+            updated += recognition.updatedCount;
+            failed += recognition.failedCount;
+          } catch {
+            failed += chunk.length;
+          }
+          processed += chunk.length;
+          setImportProgress({ processed, total: importedIds.length, updated, failed });
+        }
+      }
       setMessage(
-        interpolate(w.imported, {
+        interpolate(importedIds.length ? w.importedRecognized : w.imported, {
           count: result.imported,
           skipped: result.skipped,
+          updated,
+          failed,
         }),
       );
       await onChanged?.();
@@ -533,6 +573,7 @@ export default function PersonalToolsModal({
       setError(errorMessage(e));
     } finally {
       setLoading(false);
+      setImportProgress(null);
     }
   }
   async function download() {
@@ -687,8 +728,16 @@ export default function PersonalToolsModal({
         disabled={loading || !chosen.size}
         onClick={importNow}
       >
-        {w.importNow}
+        {importProgress ? w.importRecognizingShort : w.importNow}
       </button>
+      {importProgress && (
+        <div className="import-recognition-progress" role="status">
+          <span className="batch-progress-track">
+            <span style={{width:`${Math.round((importProgress.processed/importProgress.total)*100)}%`}} />
+          </span>
+          {interpolate(w.importRecognizing, importProgress)}
+        </div>
+      )}
     </>
   );
 

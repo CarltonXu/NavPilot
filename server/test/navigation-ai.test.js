@@ -73,9 +73,10 @@ test("navigation service moves items and rejects stale updates", () => {
     b = service.createCategory(current, { name: "B" }).value;
   const first = service.createItem(current, {
     name: "One",
-    url: "https://one.example",
+    url: "one.example",
     category_id: a.id,
   }).value;
+  assert.equal(first.url, "https://one.example/");
   service.createItem(current, {
     name: "Two",
     url: "https://two.example",

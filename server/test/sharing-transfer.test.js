@@ -146,6 +146,22 @@ test("profile, sharing, Chrome preview, duplicate detection and acceptance impor
     result.body.categories.map((row) => row.name),
     ["Bookmarks bar", "Tools"],
   );
+  result = await request(recipientToken, "/api/transfer/import", {
+    method: "POST",
+    body: JSON.stringify({
+      payload: result.body,
+      selectedKeys: [result.body.items[0].key],
+    }),
+  });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.imported, 1);
+  assert.equal(result.body.importedIds.length, 1);
+  assert.equal(
+    db
+      .prepare("SELECT owner_id FROM items WHERE id=?")
+      .get(result.body.importedIds[0]).owner_id,
+    recipient.id,
+  );
 });
 
 test.after(() => db.close());
