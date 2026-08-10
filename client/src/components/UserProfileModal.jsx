@@ -11,7 +11,7 @@ const copy = {
     profile: "个人资料",
     profileDesc: "这些信息用于账户展示",
     preferences: "偏好设置",
-    preferencesDesc: "偏好会同步到你的其他设备",
+    preferencesDesc: "作为没有本地选择时的默认值；当前浏览器的手动调整优先保留",
     security: "账户安全",
     securityDesc: "定期更新密码可以提高账户安全性",
     username: "用户名",
@@ -45,7 +45,7 @@ const copy = {
     profile: "Profile",
     profileDesc: "Information shown across your account",
     preferences: "Preferences",
-    preferencesDesc: "Preferences sync across your devices",
+    preferencesDesc: "Defaults for browsers without local choices; manual choices in this browser take priority",
     security: "Security",
     securityDesc: "Keep your account secure with a strong password",
     username: "Username",
@@ -77,7 +77,7 @@ const copy = {
 
 export default function UserProfileModal({ onClose }) {
   const auth = useAuth();
-  const { locale, setLocale, errorMessage, t } = useI18n();
+  const { locale, errorMessage, t } = useI18n();
   const c = copy[locale] || copy["zh-CN"];
   const closeRef = useRef(null);
   const [tab, setTab] = useState("profile");
@@ -121,14 +121,9 @@ export default function UserProfileModal({ onClose }) {
     setSaved("");
     try {
       const user = await auth.updateProfile(draft);
-      localStorage.setItem("navpilot_theme", user.preferences.theme);
-      localStorage.setItem("navpilot_view_mode_v1", user.preferences.viewMode);
-      localStorage.setItem(
-        `navpilot_space_v1:${user.id}`,
-        user.preferences.defaultSpace,
-      );
-      document.documentElement.dataset.theme = user.preferences.theme;
-      setLocale(user.preferences.locale);
+      window.dispatchEvent(new CustomEvent("navpilot:preferences-updated", {
+        detail: user.preferences,
+      }));
       setSaved(c.saved);
     } catch (e) {
       setError(errorMessage(e));

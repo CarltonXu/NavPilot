@@ -12,6 +12,7 @@ test("profile, sharing, Chrome preview, duplicate detection and acceptance impor
     username: "sender",
     displayName: "Sender",
     password: "strong-password-1",
+    role: "admin",
     mustChangePassword: false,
   });
   const recipient = await createUser({
@@ -162,6 +163,56 @@ test("profile, sharing, Chrome preview, duplicate detection and acceptance impor
       .get(result.body.importedIds[0]).owner_id,
     recipient.id,
   );
+
+  const publicCategory = Number(
+    db.prepare("INSERT INTO categories(name,scope,owner_id) VALUES(?,'public',NULL)")
+      .run("Public transfer test").lastInsertRowid,
+  );
+  const publicItem = Number(
+    db.prepare("INSERT INTO items(name,url,category_id,scope,owner_id) VALUES(?,?,?,'public',NULL)")
+      .run("Public handbook", "https://public-handbook.example/", publicCategory).lastInsertRowid,
+  );
+  result = await request(senderToken, "/api/transfer/export", {
+    method:"POST",
+    body:JSON.stringify({ scope:"public", selection:{ itemIds:[publicItem] } }),
+  });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.sourceScope, "public");
+  assert.equal(result.body.items[0].name, "Public handbook");
+  const publicPayload = {
+    format:"navpilot",
+    version:1,
+    categories:[],
+    items:[{ key:"public-import", name:"Imported public tool", url:"https://public-tool.example/" }],
+  };
+  result = await request(senderToken, "/api/transfer/preview", {
+    method:"POST",
+    body:JSON.stringify({ scope:"public", payload:publicPayload, format:"navpilot" }),
+  });
+  assert.equal(result.body.summary.duplicates, 0);
+  result = await request(senderToken, "/api/transfer/import", {
+    method:"POST",
+    body:JSON.stringify({ scope:"public", payload:result.body, selectedKeys:["public-import"] }),
+  });
+  assert.equal(result.response.status, 200);
+  assert.equal(db.prepare("SELECT scope,owner_id FROM items WHERE id=?").get(result.body.importedIds[0]).scope, "public");
+  result = await request(recipientToken, "/api/transfer/export", {
+    method:"POST",
+    body:JSON.stringify({ scope:"public", selection:{ all:true } }),
+  });
+  assert.equal(result.response.status, 403);
+  result = await request(senderToken, "/api/shares", {
+    method:"POST",
+    body:JSON.stringify({ scope:"public", recipients:["recipient"], selection:{ itemIds:[publicItem] } }),
+  });
+  assert.equal(result.response.status, 201);
+  const publicShareId = result.body.shares[0].id;
+  result = await request(recipientToken, `/api/shares/${publicShareId}/respond`, {
+    method:"POST",
+    body:JSON.stringify({ action:"accept", preserveStructure:true }),
+  });
+  assert.equal(result.response.status, 200);
+  assert.equal(db.prepare("SELECT COUNT(*) count FROM items WHERE scope='personal' AND owner_id=? AND url=?").get(recipient.id,"https://public-handbook.example/").count, 1);
 });
 
 test.after(() => db.close());

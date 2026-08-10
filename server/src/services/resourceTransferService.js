@@ -13,19 +13,28 @@ function validUrl(value) {
     return null;
   }
 }
-function categoryRows(db, userId) {
-  return db
-    .prepare(
-      "SELECT id,name,icon,parent_id,sort_order FROM categories WHERE scope='personal' AND owner_id=? ORDER BY sort_order,id",
-    )
-    .all(userId);
+function normalizeRealm(value) {
+  if (value && typeof value === "object") {
+    const scope = value.scope === "public" ? "public" : "personal";
+    return { scope, ownerId: scope === "public" ? null : value.ownerId };
+  }
+  return { scope:"personal", ownerId:value };
 }
-function itemRows(db, userId) {
+function categoryRows(db, realmValue) {
+  const current = normalizeRealm(realmValue);
   return db
     .prepare(
-      "SELECT id,name,url,icon,description,tags_json,category_id,sort_order,check_enabled,check_method,check_target FROM items WHERE scope='personal' AND owner_id=? ORDER BY sort_order,id",
+      "SELECT id,name,icon,parent_id,sort_order FROM categories WHERE scope=? AND owner_id IS ? ORDER BY sort_order,id",
     )
-    .all(userId);
+    .all(current.scope, current.ownerId);
+}
+function itemRows(db, realmValue) {
+  const current = normalizeRealm(realmValue);
+  return db
+    .prepare(
+      "SELECT id,name,url,icon,description,tags_json,category_id,sort_order,check_enabled,check_method,check_target FROM items WHERE scope=? AND owner_id IS ? ORDER BY sort_order,id",
+    )
+    .all(current.scope, current.ownerId);
 }
 function tags(value) {
   try {
@@ -52,11 +61,12 @@ function tags(value) {
 
 function selectionSnapshot(
   db,
-  userId,
+  realmValue,
   { all = false, itemIds = [], categoryIds = [] } = {},
 ) {
-  const categories = categoryRows(db, userId),
-    items = itemRows(db, userId),
+  const current = normalizeRealm(realmValue),
+    categories = categoryRows(db, current),
+    items = itemRows(db, current),
     byId = new Map(categories.map((row) => [row.id, row]));
   const categorySet = new Set((categoryIds || []).map(Number)),
     itemSet = new Set((itemIds || []).map(Number));
@@ -97,6 +107,7 @@ function selectionSnapshot(
   return {
     format: "navpilot",
     version: 1,
+    sourceScope: current.scope,
     exportedAt: new Date().toISOString(),
     categories: selectedCategories.map((row) => ({
       key: `category:${row.id}`,
@@ -223,13 +234,13 @@ function normalizeChrome(payload) {
   return normalizeNavpilot({ categories, items });
 }
 
-function previewImport(db, userId, payload, format = "auto") {
+function previewImport(db, realmValue, payload, format = "auto") {
   const normalized =
     format === "chrome" || (format === "auto" && payload?.roots)
       ? normalizeChrome(payload)
       : normalizeNavpilot(payload);
   const existing = new Set(
-    itemRows(db, userId)
+    itemRows(db, realmValue)
       .map((row) => validUrl(row.url)?.toLowerCase())
       .filter(Boolean),
   );
@@ -252,11 +263,12 @@ function previewImport(db, userId, payload, format = "auto") {
 
 function importNormalized(
   db,
-  userId,
+  realmValue,
   input,
   { selectedKeys, targetCategoryId = null, preserveStructure = true, returnIds = false } = {},
 ) {
-  const data = normalizeNavpilot(input),
+  const current = normalizeRealm(realmValue),
+    data = normalizeNavpilot(input),
     selected = new Set(
       Array.isArray(selectedKeys)
         ? selectedKeys.map(String)
@@ -270,9 +282,9 @@ function importNormalized(
       ? null
       : db
           .prepare(
-            "SELECT id FROM categories WHERE id=? AND scope='personal' AND owner_id=?",
+            "SELECT id FROM categories WHERE id=? AND scope=? AND owner_id IS ?",
           )
-          .get(Number(targetCategoryId), userId);
+          .get(Number(targetCategoryId), current.scope, current.ownerId);
   if (targetCategoryId != null && !target)
     throw problem("CATEGORY_NOT_FOUND", "目标分类不存在", 404);
   const categories = new Map(data.categories.map((row) => [row.key, row])),
@@ -286,7 +298,7 @@ function importNormalized(
   }
   const result = db.transaction(() => {
     const existing = new Set(
-        itemRows(db, userId)
+        itemRows(db, current)
           .map((row) => validUrl(row.url)?.toLowerCase())
           .filter(Boolean),
       ),
@@ -314,24 +326,24 @@ function importNormalized(
       }
       const found = db
         .prepare(
-          "SELECT id FROM categories WHERE scope='personal' AND owner_id=? AND parent_id IS ? AND name=? COLLATE NOCASE",
+          "SELECT id FROM categories WHERE scope=? AND owner_id IS ? AND parent_id IS ? AND name=? COLLATE NOCASE",
         )
-        .get(userId, parent, row.name);
+        .get(current.scope, current.ownerId, parent, row.name);
       if (found) {
         categoryMap.set(key, found.id);
         return found.id;
       }
       const max = db
         .prepare(
-          "SELECT COALESCE(MAX(sort_order),-1) max FROM categories WHERE scope='personal' AND owner_id=? AND parent_id IS ?",
+          "SELECT COALESCE(MAX(sort_order),-1) max FROM categories WHERE scope=? AND owner_id IS ? AND parent_id IS ?",
         )
-        .get(userId, parent).max;
+        .get(current.scope, current.ownerId, parent).max;
       const id = Number(
         db
           .prepare(
-            "INSERT INTO categories(name,icon,scope,owner_id,parent_id,sort_order,version,updated_at) VALUES(?,?,'personal',?,?,?,1,datetime('now'))",
+            "INSERT INTO categories(name,icon,scope,owner_id,parent_id,sort_order,version,updated_at) VALUES(?,?,?,?,?,?,1,datetime('now'))",
           )
-          .run(row.name, row.icon, userId, parent, max + 1).lastInsertRowid,
+          .run(row.name, row.icon, current.scope, current.ownerId, parent, max + 1).lastInsertRowid,
       );
       categoryMap.set(key, id);
       return id;
@@ -349,11 +361,11 @@ function importNormalized(
       const categoryId = ensure(item.categoryKey),
         max = db
           .prepare(
-            "SELECT COALESCE(MAX(sort_order),-1) max FROM items WHERE scope='personal' AND owner_id=? AND category_id IS ?",
+            "SELECT COALESCE(MAX(sort_order),-1) max FROM items WHERE scope=? AND owner_id IS ? AND category_id IS ?",
           )
-          .get(userId, categoryId).max;
+          .get(current.scope, current.ownerId, categoryId).max;
       const importedId = Number(db.prepare(
-        "INSERT INTO items(name,url,icon,description,tags_json,category_id,sort_order,check_method,check_target,check_enabled,scope,owner_id,version,updated_at) VALUES(?,?,?,?,?,?,?, ?,NULL,0,'personal',?,1,datetime('now'))",
+        "INSERT INTO items(name,url,icon,description,tags_json,category_id,sort_order,check_method,check_target,check_enabled,scope,owner_id,version,updated_at) VALUES(?,?,?,?,?,?,?, ?,NULL,0,?,?,1,datetime('now'))",
       ).run(
         item.name,
         item.url,
@@ -363,7 +375,8 @@ function importNormalized(
         categoryId,
         max + 1,
         item.checkMethod === "http" ? "http" : "none",
-        userId,
+        current.scope,
+        current.ownerId,
       ).lastInsertRowid);
       importedIds.push(importedId);
       existing.add(fingerprint);
@@ -381,12 +394,12 @@ function importNormalized(
 
 function createTransferService(db = defaultDb) {
   return {
-    selectionSnapshot: (userId, selection) =>
-      selectionSnapshot(db, userId, selection),
-    previewImport: (userId, payload, format) =>
-      previewImport(db, userId, payload, format),
-    importNormalized: (userId, input, options) =>
-      importNormalized(db, userId, input, options),
+    selectionSnapshot: (realmValue, selection) =>
+      selectionSnapshot(db, realmValue, selection),
+    previewImport: (realmValue, payload, format) =>
+      previewImport(db, realmValue, payload, format),
+    importNormalized: (realmValue, input, options) =>
+      importNormalized(db, realmValue, input, options),
   };
 }
 module.exports = {

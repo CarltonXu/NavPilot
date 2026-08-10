@@ -359,12 +359,28 @@ export default function PersonalToolsModal({
   categories,
   selectedIds = [],
   activeCategory,
+  scope = "personal",
   onClose,
   onChanged,
   initialTab = "share",
 }) {
   const { locale, errorMessage, t } = useI18n();
-  const w = words[locale] || words["zh-CN"];
+  const baseWords = words[locale] || words["zh-CN"];
+  const isPublic = scope === "public";
+  const w = {
+    ...baseWords,
+    title: locale === "en" ? "Space tools" : "空间工具",
+    subtitle: locale === "en"
+      ? `Share, import, and export resources in ${isPublic ? "Public Space" : "My Space"}`
+      : `共享、导入和导出${isPublic ? "公共空间" : "个人空间"}资源`,
+    all: locale === "en"
+      ? isPublic ? "Entire Public Space" : "Entire My Space"
+      : isPublic ? "整个公共空间" : "整个个人空间",
+    root: locale === "en"
+      ? isPublic ? "Public Space root" : "My Space root"
+      : isPublic ? "公共空间根目录" : "个人空间根目录",
+    personalRoot: locale === "en" ? "My Space root" : "个人空间根目录",
+  };
   const initialCategories =
     typeof activeCategory === "number" ? new Set([activeCategory]) : new Set();
   const [tab, setTab] = useState(initialTab);
@@ -378,6 +394,9 @@ export default function PersonalToolsModal({
   const [categoryIds, setCategoryIds] = useState(initialCategories);
   const [recipients, setRecipients] = useState("");
   const [shares, setShares] = useState({ sent: [], received: [] });
+  const [personalCategories, setPersonalCategories] = useState(
+    isPublic ? [] : categories,
+  );
   const [shareDetail, setShareDetail] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -387,6 +406,7 @@ export default function PersonalToolsModal({
   const [preview, setPreview] = useState(null);
   const [chosen, setChosen] = useState(new Set());
   const [target, setTarget] = useState("");
+  const [acceptTarget, setAcceptTarget] = useState("");
   const [preserve, setPreserve] = useState(true);
   const [importProgress, setImportProgress] = useState(null);
   const categoryOptions = useMemo(
@@ -398,6 +418,14 @@ export default function PersonalToolsModal({
       )),
     [categories],
   );
+  const personalCategoryOptions = useMemo(
+    () => personalCategories.map((category) => (
+      <option key={category.id} value={category.id}>
+        {category.path_label || category.name}
+      </option>
+    )),
+    [personalCategories],
+  );
 
   async function loadShares() {
     try {
@@ -408,6 +436,8 @@ export default function PersonalToolsModal({
   }
   useEffect(() => {
     loadShares();
+    if (isPublic)
+      api.listCategories("personal").then(setPersonalCategories).catch(() => {});
   }, []);
   useEffect(() => {
     if (!importProgress) return undefined;
@@ -431,6 +461,7 @@ export default function PersonalToolsModal({
     setImportProgress(null);
     try {
       await api.createShare({
+        scope,
         recipients: recipients
           .split(/[\n,，]+/)
           .map((value) => value.trim())
@@ -453,7 +484,7 @@ export default function PersonalToolsModal({
     try {
       await api.respondShare(share.id, {
         action,
-        targetCategoryId: target ? Number(target) : null,
+        targetCategoryId: acceptTarget ? Number(acceptTarget) : null,
         preserveStructure: preserve,
       });
       await loadShares();
@@ -492,7 +523,7 @@ export default function PersonalToolsModal({
     setLoading(true);
     setError("");
     try {
-      const value = await api.previewImport(payload, format);
+      const value = await api.previewImport(scope, payload, format);
       setPreview(value);
       setChosen(
         new Set(
@@ -530,7 +561,7 @@ export default function PersonalToolsModal({
     setError("");
     setMessage("");
     try {
-      const result = await api.importResources({
+      const result = await api.importResources(scope, {
         payload: preview,
         selectedKeys: [...chosen],
         targetCategoryId: target ? Number(target) : null,
@@ -547,7 +578,7 @@ export default function PersonalToolsModal({
         for (let offset = 0; offset < importedIds.length; offset += 12) {
           const chunk = importedIds.slice(offset, offset + 12);
           try {
-            const recognition = await api.bulkInspectItems("personal", chunk);
+            const recognition = await api.bulkInspectItems(scope, chunk);
             updated += recognition.updatedCount;
             failed += recognition.failedCount;
           } catch {
@@ -580,7 +611,7 @@ export default function PersonalToolsModal({
     setLoading(true);
     setError("");
     try {
-      const payload = await api.exportResources(body());
+      const payload = await api.exportResources(scope, body());
       const blob = new Blob([JSON.stringify(payload, null, 2)], {
         type: "application/json",
       });
@@ -859,11 +890,11 @@ export default function PersonalToolsModal({
                       {share.status === "pending" && (
                         <div className="share-response">
                           <select
-                            value={target}
-                            onChange={(e) => setTarget(e.target.value)}
+                            value={acceptTarget}
+                            onChange={(e) => setAcceptTarget(e.target.value)}
                           >
-                            <option value="">{w.root}</option>
-                            {categoryOptions}
+                            <option value="">{w.personalRoot}</option>
+                            {personalCategoryOptions}
                           </select>
                           <label>
                             <input

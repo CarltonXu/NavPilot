@@ -101,8 +101,14 @@ router.post("/", (req, res) => {
       throw Object.assign(new Error("请输入接收用户的用户名或 ID"), {
         code: "SHARE_RECIPIENT_REQUIRED",
       });
+    const sourceScope = req.body.scope === "public" ? "public" : "personal";
+    if (sourceScope === "public" && req.auth.user.role !== "admin")
+      throw Object.assign(new Error("只有管理员可以共享公共空间资源"), {
+        code:"FORBIDDEN",
+        status:403,
+      });
     const snapshot = transfer.selectionSnapshot(
-        req.auth.user.id,
+        { scope:sourceScope, ownerId:sourceScope === "personal" ? req.auth.user.id : null },
         req.body.selection || {},
       ),
       created = [];
@@ -139,6 +145,7 @@ router.post("/", (req, res) => {
           metadata: {
             recipientUserId: user.id,
             recipientUsername: user.username,
+            sourceScope,
             itemCount: snapshot.items.length,
             categoryCount: snapshot.categories.length,
           },
@@ -187,7 +194,7 @@ router.post("/:id/respond", (req, res) => {
     db.transaction(() => {
       if (action === "accept") {
         const snapshot = JSON.parse(share.snapshot_json);
-        result = transfer.importNormalized(req.auth.user.id, snapshot, {
+        result = transfer.importNormalized({ scope:"personal", ownerId:req.auth.user.id }, snapshot, {
           selectedKeys: snapshot.items.map((item) => item.key),
           targetCategoryId: req.body.targetCategoryId ?? null,
           preserveStructure: req.body.preserveStructure !== false,

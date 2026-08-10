@@ -39,6 +39,7 @@ import PersonalToolsModal from "./components/PersonalToolsModal.jsx";
 import GlobalSearch from "./components/GlobalSearch.jsx";
 import RecognitionResultDialog from "./components/RecognitionResultDialog.jsx";
 import ResourceOverview from "./components/ResourceOverview.jsx";
+import { browserPreference } from "./utils/browserPreference.js";
 
 const validView = (value) => {
   const migrated = ["dense", "board"].includes(value) ? "overview" : value;
@@ -209,7 +210,7 @@ function SearchCreateSuggestion({ query, url, onCreate }) {
 
 function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
   const auth = useAuth();
-  const { t, errorMessage } = useI18n();
+  const { t, errorMessage, locale } = useI18n();
   const generation = useRef(0);
   const identityKey = auth.loading
     ? null
@@ -226,9 +227,10 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     categories: [],
     items: [],
   });
-  const [viewMode, setViewMode] = useState(() =>
-      validView(localStorage.getItem("navpilot_view_mode_v1")),
-    ),
+  const [viewMode, setViewMode] = useState(() => {
+      const cached = localStorage.getItem("navpilot_view_mode_v1");
+      return cached === null ? null : validView(cached);
+    }),
     [activeCategory, setActiveCategory] = useState("all"),
     [activeTag, setActiveTag] = useState(""),
     [query, setQuery] = useState(""),
@@ -295,26 +297,58 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     setRecognitionResult(null);
     setShowRecognitionResult(false);
     const preferred =
-        auth.user?.preferences?.defaultSpace ||
-        localStorage.getItem(`navpilot_space_v1:${auth.user?.id}`),
+        browserPreference(
+          localStorage.getItem(`navpilot_space_v1:${auth.user?.id}`),
+          auth.user?.preferences?.defaultSpace,
+          "public",
+        ),
       nextSpace =
         identityKey === "anonymous"
           ? "public"
           : preferred === "personal"
             ? "personal"
             : "public";
-    if (auth.user?.preferences?.viewMode)
-      setViewMode(validView(auth.user.preferences.viewMode));
+    const cachedView = localStorage.getItem("navpilot_view_mode_v1");
+    setViewMode(
+      validView(
+        browserPreference(
+          cachedView,
+          auth.user?.preferences?.viewMode,
+          "card",
+        ),
+      ),
+    );
     setSelection({ identityKey, space: nextSpace });
   }, [identityKey, auth.user?.id]);
   useEffect(() => {
-    if (spaceReady && auth.user)
-      localStorage.setItem(`navpilot_space_v1:${auth.user.id}`, space);
-  }, [spaceReady, space, auth.user?.id]);
-  useEffect(
-    () => localStorage.setItem("navpilot_view_mode_v1", viewMode),
-    [viewMode],
-  );
+    const apply = (event) => {
+      if (
+        event.detail?.viewMode &&
+        localStorage.getItem("navpilot_view_mode_v1") === null
+      )
+        setViewMode(validView(event.detail.viewMode));
+      const spaceKey = auth.user?.id
+        ? `navpilot_space_v1:${auth.user.id}`
+        : null;
+      if (
+        spaceKey &&
+        event.detail?.defaultSpace &&
+        localStorage.getItem(spaceKey) === null
+      ) {
+        const nextSpace =
+          event.detail.defaultSpace === "personal" ? "personal" : "public";
+        exitEditModes();
+        generation.current += 1;
+        setSelection({ identityKey, space: nextSpace });
+        setSnapshot({ key: null, status: "idle", categories: [], items: [] });
+        setActiveCategory("all");
+        setActiveTag("");
+        setQuery("");
+      }
+    };
+    window.addEventListener("navpilot:preferences-updated", apply);
+    return () => window.removeEventListener("navpilot:preferences-updated", apply);
+  }, [auth.user?.id, identityKey]);
   const load = useCallback(
     async ({ silent = false } = {}) => {
       if (!spaceReady) return;
@@ -404,6 +438,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     auth.isAdmin &&
     !auth.user?.mustChangePassword &&
     ready;
+  const canUseSpaceTools = isPersonalOwner || canEditPublic;
   const canManage =
     (canEditPublic && publicEditMode) || (isPersonalOwner && personalEditMode);
   function exitEditModes() {
@@ -437,11 +472,18 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     setRecognitionResult(null);
     setShowRecognitionResult(false);
     generation.current += 1;
+    if (auth.user?.id)
+      localStorage.setItem(`navpilot_space_v1:${auth.user.id}`, next);
     setSelection({ identityKey, space: next });
     setSnapshot({ key: null, status: "idle", categories: [], items: [] });
     setActiveCategory("all");
     setActiveTag("");
     setQuery("");
+  }
+  function changeViewMode(next) {
+    const normalized = validView(next);
+    localStorage.setItem("navpilot_view_mode_v1", normalized);
+    setViewMode(normalized);
   }
   async function saveItem(form) {
     if (!canManage) return;
@@ -787,7 +829,11 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       /* keep query */
     }
     if (canManage) {
-      setEditingItem({ name, url });
+      setEditingItem({
+        name,
+        url,
+        category_id: typeof activeCategory === "number" ? activeCategory : null,
+      });
       return;
     }
     if (!auth.authenticated) {
@@ -841,7 +887,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
           />
         </div>
         <div className="topbar-actions">
-          {isPersonalOwner && (
+          {canUseSpaceTools && (
             <button
               className="icon-btn"
               disabled={recognizing}
@@ -851,14 +897,25 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
               }}
             >
               <Icon name="folder" size={16} />
-              {auth.user?.preferences?.locale === "en"
-                ? "My Space tools"
-                : "个人空间工具"}
+              {locale === "en"
+                ? "Space tools"
+                : "空间工具"}
             </button>
           )}
           {canManage && (
             <>
-              <button className="icon-btn" disabled={recognizing} onClick={() => setEditingItem({})}>
+              <button
+                className="icon-btn"
+                disabled={recognizing}
+                onClick={() =>
+                  setEditingItem({
+                    category_id:
+                      typeof activeCategory === "number"
+                        ? activeCategory
+                        : null,
+                  })
+                }
+              >
                 <Icon name="plus" size={16} />
                 {t("nav.add")}
               </button>
@@ -919,14 +976,10 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
             recognitionProgress={recognitionProgress}
             hasRecognitionResult={Boolean(recognitionResult)}
             onShowRecognitionResult={() => setShowRecognitionResult(true)}
-            onShare={
-              space === "personal"
-                ? () => {
-                    setPersonalToolsTab("share");
-                    setShowPersonalTools(true);
-                  }
-                : null
-            }
+            onShare={() => {
+              setPersonalToolsTab("share");
+              setShowPersonalTools(true);
+            }}
             onMove={() =>
               moveItems(
                 [...selectedIds],
@@ -941,19 +994,19 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
         ) : (
           <span>{t("app.total", { count: items.length })}</span>
         )}
-        <ViewModeSwitcher value={viewMode} onChange={setViewMode} />
+        <ViewModeSwitcher value={viewMode} onChange={changeViewMode} />
       </div>
       {allTags.length > 0 && (
         <div className="tag-filter-bar">
           <span>
             <Icon name="tag" size={14} />
-            {auth.user?.preferences?.locale === "en" ? "Tags" : "标签"}
+            {locale === "en" ? "Tags" : "标签"}
           </span>
           <button
             className={!activeTag ? "active" : ""}
             onClick={() => setActiveTag("")}
           >
-            {auth.user?.preferences?.locale === "en" ? "All" : "全部"}
+            {locale === "en" ? "All" : "全部"}
           </button>
           {allTags.map((tag) => (
             <button
@@ -1059,6 +1112,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       )}
       {showPersonalTools && (
         <PersonalToolsModal
+          scope={space}
           categories={categories}
           selectedIds={[...selectedIds]}
           activeCategory={activeCategory}
@@ -1092,38 +1146,45 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
 
 export default function App() {
   const auth = useAuth();
-  const { setLocale } = useI18n();
+  const { setDefaultLocale } = useI18n();
   const [theme, setTheme] = useState(
-    () => localStorage.getItem("navpilot_theme") || "dark",
+    () => browserPreference(localStorage.getItem("navpilot_theme"), null, "dark"),
   );
+  const changeTheme = useCallback((next) => {
+    localStorage.setItem("navpilot_theme", next);
+    setTheme(next);
+  }, []);
   const [publicSettings, setPublicSettings] = useState({
     ai_personal_enabled: false,
     branding: { siteName: "NavPilot", logoUrl: "", faviconUrl: "" },
   });
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    localStorage.setItem("navpilot_theme", theme);
   }, [theme]);
   useEffect(() => {
     const preferences = auth.user?.preferences;
     if (!preferences) return;
-    if (preferences.theme) setTheme(preferences.theme);
-    if (preferences.locale) setLocale(preferences.locale);
-    if (preferences.viewMode)
-      localStorage.setItem("navpilot_view_mode_v1", preferences.viewMode);
-    if (preferences.defaultSpace)
-      localStorage.setItem(
-        `navpilot_space_v1:${auth.user.id}`,
-        preferences.defaultSpace,
-      );
+    if (localStorage.getItem("navpilot_theme") === null && preferences.theme) {
+      setTheme(preferences.theme);
+    }
+    if (preferences.locale) setDefaultLocale(preferences.locale);
   }, [
     auth.user?.id,
     auth.user?.preferences?.theme,
     auth.user?.preferences?.locale,
-    auth.user?.preferences?.viewMode,
-    auth.user?.preferences?.defaultSpace,
-    setLocale,
+    setDefaultLocale,
   ]);
+  useEffect(() => {
+    const apply = (event) => {
+      if (
+        event.detail?.theme &&
+        localStorage.getItem("navpilot_theme") === null
+      )
+        setTheme(event.detail.theme);
+    };
+    window.addEventListener("navpilot:preferences-updated", apply);
+    return () => window.removeEventListener("navpilot:preferences-updated", apply);
+  }, []);
   useEffect(() => {
     api
       .getPublicSettings()
@@ -1148,7 +1209,7 @@ export default function App() {
       {admin ? (
         <AdminWorkspace
           theme={theme}
-          onThemeChange={setTheme}
+          onThemeChange={changeTheme}
           branding={branding}
           onBrandingChange={(next) =>
             setPublicSettings((current) => ({ ...current, branding: next }))
@@ -1157,7 +1218,7 @@ export default function App() {
       ) : (
         <PortalWorkspace
           theme={theme}
-          onThemeChange={setTheme}
+          onThemeChange={changeTheme}
           branding={branding}
           publicSettings={publicSettings}
         />

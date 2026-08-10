@@ -1,17 +1,25 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { normalizeLocale, translate, translateAuditEvent } from './messages.js';
 
 const LocaleContext = createContext(null);
 
 export function LocaleProvider({ children }) {
-  const [locale, setLocaleState] = useState(() => normalizeLocale(localStorage.getItem('navpilot_locale')));
+  const cachedLocale = localStorage.getItem('navpilot_locale');
+  const explicitLocale = useRef(cachedLocale !== null);
+  const [locale, setLocaleState] = useState(() => normalizeLocale(cachedLocale));
 
-  useEffect(() => {
-    localStorage.setItem('navpilot_locale', locale);
-    document.documentElement.lang = locale;
-  }, [locale]);
+  useEffect(() => { document.documentElement.lang = locale; }, [locale]);
 
-  const setLocale = useCallback((next) => setLocaleState(normalizeLocale(next)), []);
+  const setLocale = useCallback((next) => {
+    const normalized = normalizeLocale(next);
+    explicitLocale.current = true;
+    localStorage.setItem('navpilot_locale', normalized);
+    setLocaleState(normalized);
+  }, []);
+  const setDefaultLocale = useCallback((next) => {
+    if (explicitLocale.current) return;
+    setLocaleState(normalizeLocale(next));
+  }, []);
   const t = useCallback((key, variables) => translate(locale, key, variables), [locale]);
   const errorMessage = useCallback((error) => {
     if (error?.code) {
@@ -22,7 +30,7 @@ export function LocaleProvider({ children }) {
   }, [locale]);
 
   const auditEventLabel = useCallback((eventType) => translateAuditEvent(locale, eventType), [locale]);
-  const value = useMemo(() => ({ locale, setLocale, t, errorMessage, auditEventLabel }), [locale, setLocale, t, errorMessage, auditEventLabel]);
+  const value = useMemo(() => ({ locale, setLocale, setDefaultLocale, t, errorMessage, auditEventLabel }), [locale, setLocale, setDefaultLocale, t, errorMessage, auditEventLabel]);
   return <LocaleContext.Provider value={value}>{children}</LocaleContext.Provider>;
 }
 
