@@ -117,8 +117,11 @@ function pinnedLookup(records) {
       callback = options;
       options = {};
     }
-    if (options?.all) return callback(null, [record]);
-    return callback(null, record.address, record.family);
+    // dns.lookup is always asynchronous. Keeping the same contract gives the
+    // ClientRequest time to attach its socket error handler before an IPv6
+    // connect attempt can fail immediately with ENETUNREACH.
+    if (options?.all) return queueMicrotask(() => callback(null, [record]));
+    return queueMicrotask(() => callback(null, record.address, record.family));
   };
 }
 
@@ -232,6 +235,8 @@ function createUrlMetadataService({
         family: Number(pinnedRecord.family),
         autoSelectFamily: false,
       };
+      const httpAgent = new http.Agent(agentOptions);
+      const httpsAgent = new https.Agent(agentOptions);
       let response;
       try {
         response = await request.get(current.href, {
@@ -242,8 +247,8 @@ function createUrlMetadataService({
           responseType: "text",
           validateStatus: () => true,
           proxy: false,
-          httpAgent: new http.Agent(agentOptions),
-          httpsAgent: new https.Agent(agentOptions),
+          httpAgent,
+          httpsAgent,
           headers: {
             Accept: "text/html,application/xhtml+xml",
             "User-Agent": "NavPilot-Metadata/1.0",
@@ -252,10 +257,15 @@ function createUrlMetadataService({
       } catch (error) {
         throw metadataError(
           "URL_METADATA_UNAVAILABLE",
-          error.code === "ECONNABORTED"
+          error.code === "ECONNABORTED" || error.code === "ETIMEDOUT"
             ? "网站响应超时，暂时无法自动识别"
+            : error.code === "ENETUNREACH"
+              ? "当前服务器无法连接该网站的网络地址"
             : "网站无法访问或拒绝了信息识别",
         );
+      } finally {
+        httpAgent.destroy();
+        httpsAgent.destroy();
       }
       if (
         response.status >= 300 &&

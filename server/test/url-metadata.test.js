@@ -130,3 +130,34 @@ test("URL metadata service allows private targets only when explicitly authorize
   assert.equal(requested, true);
   assert.equal(result.name, "Internal Wiki");
 });
+
+test("URL metadata service contains an unreachable IPv6 connection as a normal failure", async () => {
+  let lookupWasAsync = false;
+  const service = createUrlMetadataService({
+    lookup: async () => [{ address: "2606:4700:4700::1111", family: 6 }],
+    request: {
+      get: async (_url, options) => {
+        let synchronous = true;
+        const lookupPromise = new Promise((resolve, reject) => options.httpsAgent.options.lookup(
+          "ipv6.example",
+          {},
+          (error, address, family) => {
+            if (error) return reject(error);
+            lookupWasAsync = !synchronous;
+            assert.equal(address, "2606:4700:4700::1111");
+            assert.equal(family, 6);
+            resolve();
+          },
+        ));
+        synchronous = false;
+        await lookupPromise;
+        throw Object.assign(new Error("connect ENETUNREACH"), { code:"ENETUNREACH" });
+      },
+    },
+  });
+  await assert.rejects(
+    () => service.fetchPage("https://ipv6.example"),
+    (error) => error.code === "URL_METADATA_UNAVAILABLE" && /无法连接/.test(error.message),
+  );
+  assert.equal(lookupWasAsync, true);
+});

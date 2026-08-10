@@ -57,6 +57,29 @@ errors: { generic: 'Request failed. Please try again.', AUTH_REQUIRED: 'Sign in 
   },
 };
 
+Object.assign(messages['zh-CN'].settings, {
+  requestTimeout: '请求超时（秒）',
+  requestTimeoutHint: '建议 60–120 秒，允许范围 10–180 秒。',
+  timeoutSummary: '{seconds} 秒超时',
+});
+Object.assign(messages.en.settings, {
+  requestTimeout: 'Request timeout (seconds)',
+  requestTimeoutHint: '60–120 seconds is recommended; allowed range is 10–180.',
+  timeoutSummary: '{seconds}s timeout',
+});
+Object.assign(messages['zh-CN'].ai, {
+  planningStages: { context:'正在整理资源上下文', request:'正在请求模型生成规划', slow:'模型响应较慢，仍在等待' },
+  planningHint: '超时后会自动压缩上下文重试，请勿重复提交。',
+});
+Object.assign(messages.en.ai, {
+  planningStages: { context:'Preparing resource context', request:'Requesting a plan from the model', slow:'The model is responding slowly; still waiting' },
+  planningHint: 'NavPilot will retry once with compressed context after a timeout.',
+});
+messages['zh-CN'].errors.INVALID_AI_REQUEST_TIMEOUT = '模型请求超时必须在 10–180 秒之间';
+messages.en.errors.INVALID_AI_REQUEST_TIMEOUT = 'The model timeout must be between 10 and 180 seconds';
+messages['zh-CN'].errors.AI_UPSTREAM_TIMEOUT = '上游模型响应超时；系统已自动压缩上下文重试。请稍后重试，或在 AI 设置中增加超时并配置备用模型';
+messages.en.errors.AI_UPSTREAM_TIMEOUT = 'The upstream model timed out after an automatic compressed-context retry. Increase the timeout or add a fallback model.';
+
 const supplementalAuditEvents = {
   'zh-CN': { 'item.bulk_deleted': '批量删除资源', 'item.bulk_metadata_updated': '批量识别网站信息' },
   en: { 'item.bulk_deleted': 'Resources bulk deleted', 'item.bulk_metadata_updated': 'Website metadata identified in bulk' },

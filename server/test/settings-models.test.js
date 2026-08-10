@@ -21,6 +21,7 @@ test('manages multiple AI models and keeps an enabled default', () => {
   assert.equal(settings.defaultAiModelId, first.id);
   assert.equal(first.isDefault, true);
   assert.equal(first.baseURL, 'https://ai-one.example/v1');
+  assert.equal(first.requestTimeoutMs, 90000);
   assert.equal(first.maskedApiKey, '••••-one');
   assert.equal(Object.hasOwn(first, 'apiKey'), false);
   const storedModels=db.prepare("SELECT value FROM settings WHERE key='ai_models_v1'").get().value;
@@ -37,7 +38,8 @@ test('manages multiple AI models and keeps an enabled default', () => {
   assert.equal(settings.defaultAiModelId, second.id);
   assert.equal(getEffectiveAiConfig().model, 'model-two');
 
-  settings = updateAiModel(second.id, { enabled: false });
+  settings = updateAiModel(second.id, { enabled: false, requestTimeoutMs:120000 });
+  assert.equal(settings.aiModels.find((model) => model.id === second.id).requestTimeoutMs, 120000);
   assert.equal(settings.defaultAiModelId, first.id);
   assert.equal(getEffectiveAiConfig().model, 'model-one');
   assert.throws(() => setDefaultAiModel(second.id), { code: 'AI_MODEL_DISABLED' });
@@ -56,6 +58,7 @@ test('manages multiple AI models and keeps an enabled default', () => {
   assert.equal(settings.defaultAiModelId, null);
   assert.throws(() => deleteAiModel('missing'), { code: 'AI_MODEL_NOT_FOUND' });
   assert.equal(JSON.stringify(getAdminSettingsView()).includes('secret-one'), false);
+  assert.throws(() => updateAiModel(first.id, { requestTimeoutMs:5000 }), { code:'INVALID_AI_REQUEST_TIMEOUT' });
 });
 
 test.after(() => db.close());

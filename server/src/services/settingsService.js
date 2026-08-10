@@ -8,6 +8,7 @@ const AI_SETTING_KEYS = { baseURL: 'ai_base_url', apiKey: 'ai_api_key', model: '
 const AI_MODELS_KEY = 'ai_models_v1';
 const AI_DEFAULT_MODEL_KEY = 'ai_default_model_id';
 const AI_EMBEDDING_KEY = 'ai_embedding_v1';
+const DEFAULT_AI_REQUEST_TIMEOUT_MS = 90000;
 const BRANDING_DEFAULTS = { siteName: 'NavPilot', logoUrl: '', faviconUrl: '' };
 const BRANDING_KEYS = { siteName: 'site_name', logoUrl: 'site_logo_url', faviconUrl: 'site_favicon_url' };
 
@@ -43,6 +44,12 @@ function validateApiKey(value) {
   if (!normalized || normalized.length > 4096 || /[\u0000-\u001f\u007f]/.test(normalized)) throw validationError('INVALID_AI_API_KEY', 'AI API Key 无效');
   return normalized;
 }
+function validateRequestTimeout(value) {
+  const timeout = Number(value);
+  if (!Number.isInteger(timeout) || timeout < 10000 || timeout > 180000)
+    throw validationError('INVALID_AI_REQUEST_TIMEOUT', '模型请求超时必须在 10–180 秒之间');
+  return timeout;
+}
 function validateDisplayName(value, field = '名称') {
   const normalized = String(value || '').trim();
   if (!normalized || normalized.length > 80 || /[\u0000-\u001f\u007f]/.test(normalized)) throw validationError('INVALID_DISPLAY_NAME', `${field}不能为空且不能超过 80 个字符`);
@@ -77,7 +84,8 @@ function effectiveLegacyConfig() {
   const baseURL = resolveValue(AI_SETTING_KEYS.baseURL, 'AI_BASE_URL', AI_DEFAULTS.baseURL);
   const apiKey = resolveValue(AI_SETTING_KEYS.apiKey, 'AI_API_KEY');
   const model = resolveValue(AI_SETTING_KEYS.model, 'AI_MODEL', AI_DEFAULTS.model);
-  return { baseURL:baseURL.value, apiKey:openSecret(apiKey.value), model:model.value, sources:{baseURL:baseURL.source,apiKey:apiKey.source,model:model.source} };
+  const environmentTimeout = Number(process.env.AI_REQUEST_TIMEOUT_MS);
+  return { baseURL:baseURL.value, apiKey:openSecret(apiKey.value), model:model.value, requestTimeoutMs:Number.isInteger(environmentTimeout)&&environmentTimeout>=10000&&environmentTimeout<=180000?environmentTimeout:DEFAULT_AI_REQUEST_TIMEOUT_MS, sources:{baseURL:baseURL.source,apiKey:apiKey.source,model:model.source} };
 }
 function getEffectiveAiConfig() {
   const models = getStoredAiModels();
@@ -86,7 +94,7 @@ function getEffectiveAiConfig() {
     const defaultId = getSetting(AI_DEFAULT_MODEL_KEY, '');
     const selected = enabled.find((item) => item.id === defaultId) || enabled[0];
     if (!selected) return { baseURL:'', apiKey:'', model:'', modelId:null, sources:{baseURL:'database',apiKey:'database',model:'database'} };
-    return { baseURL:selected.baseURL, apiKey:selected.apiKey || '', model:selected.model, modelId:selected.id, sources:{baseURL:'database',apiKey:'database',model:'database'} };
+    return { baseURL:selected.baseURL, apiKey:selected.apiKey || '', model:selected.model, modelId:selected.id, requestTimeoutMs:selected.requestTimeoutMs || DEFAULT_AI_REQUEST_TIMEOUT_MS, sources:{baseURL:'database',apiKey:'database',model:'database'} };
   }
   return effectiveLegacyConfig();
 }
@@ -94,7 +102,7 @@ function getEffectiveAiConfigs() {
   const models=getStoredAiModels();
   if(!models.length)return[effectiveLegacyConfig()];
   const enabled=models.filter(item=>item.enabled!==false),defaultId=getSetting(AI_DEFAULT_MODEL_KEY,''),ordered=[...enabled.filter(item=>item.id===defaultId),...enabled.filter(item=>item.id!==defaultId)];
-  return ordered.map(item=>({baseURL:item.baseURL,apiKey:item.apiKey||'',model:item.model,modelId:item.id,sources:{baseURL:'database',apiKey:'database',model:'database'}}));
+  return ordered.map(item=>({baseURL:item.baseURL,apiKey:item.apiKey||'',model:item.model,modelId:item.id,requestTimeoutMs:item.requestTimeoutMs||DEFAULT_AI_REQUEST_TIMEOUT_MS,sources:{baseURL:'database',apiKey:'database',model:'database'}}));
 }
 function getEmbeddingConfig() {
   let stored = {};
@@ -147,7 +155,7 @@ async function testEmbeddingConnection(input = null) {
   }
 }
 function aiModelView(item, defaultId, { managed = true, source = 'database' } = {}) {
-  return { id:item.id, name:item.name, baseURL:item.baseURL, model:item.model, enabled:item.enabled !== false, isDefault:item.id === defaultId, apiKeyConfigured:Boolean(item.apiKey), maskedApiKey:maskApiKey(item.apiKey), managed, source, createdAt:item.createdAt || null, updatedAt:item.updatedAt || null };
+  return { id:item.id, name:item.name, baseURL:item.baseURL, model:item.model, requestTimeoutMs:item.requestTimeoutMs || DEFAULT_AI_REQUEST_TIMEOUT_MS, enabled:item.enabled !== false, isDefault:item.id === defaultId, apiKeyConfigured:Boolean(item.apiKey), maskedApiKey:maskApiKey(item.apiKey), managed, source, createdAt:item.createdAt || null, updatedAt:item.updatedAt || null };
 }
 function getAiModelsView() {
   const models = getStoredAiModels();
@@ -170,6 +178,7 @@ function normalizeAiModel(input, current = null) {
     name: validateDisplayName(input.name ?? current?.name, '配置名称'),
     baseURL: validateBaseURL(input.baseURL ?? current?.baseURL),
     model: validateModel(input.model ?? current?.model),
+    requestTimeoutMs: input.requestTimeoutMs === undefined ? (current?.requestTimeoutMs || DEFAULT_AI_REQUEST_TIMEOUT_MS) : validateRequestTimeout(input.requestTimeoutMs),
     apiKey: apiKeyProvided ? validateApiKey(input.apiKey) : (current?.apiKey || ''),
     enabled: input.enabled === undefined ? (current?.enabled !== false) : Boolean(input.enabled),
     createdAt: current?.createdAt || now,
@@ -288,4 +297,4 @@ function migrateStoredSecrets() {
 }
 migrateStoredSecrets();
 
-module.exports = { getSetting,setSetting,deleteSetting,getBrandingSettings,getEffectiveAiConfig,getEffectiveAiConfigs,getEmbeddingConfig,updateEmbeddingConfig,testEmbeddingConnection,getAdminSettingsView,updateSystemSettings,validateSettingsUpdate,maskApiKey,addAiModel,updateAiModel,deleteAiModel,setDefaultAiModel,testAiConnection,validateBaseURL,validateModel,validateApiKey };
+module.exports = { getSetting,setSetting,deleteSetting,getBrandingSettings,getEffectiveAiConfig,getEffectiveAiConfigs,getEmbeddingConfig,updateEmbeddingConfig,testEmbeddingConnection,getAdminSettingsView,updateSystemSettings,validateSettingsUpdate,maskApiKey,addAiModel,updateAiModel,deleteAiModel,setDefaultAiModel,testAiConnection,validateBaseURL,validateModel,validateApiKey,validateRequestTimeout,DEFAULT_AI_REQUEST_TIMEOUT_MS };

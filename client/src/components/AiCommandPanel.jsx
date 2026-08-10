@@ -1,4 +1,4 @@
-import React,{useState}from'react';
+import React,{useEffect,useRef,useState}from'react';
 import{api}from'../api.js';
 import{useI18n}from'../i18n/LocaleContext.jsx';
 import{ContentIcon}from'./Icon.jsx';
@@ -10,11 +10,13 @@ function categoryDepth(operation){if(operation.op!=='category.create')return 0;c
 
 export default function AiCommandPanel({scope='personal',initialText='',onExecuted,compact=false}){
   const{t,locale,errorMessage}=useI18n();
-  const[text,setText]=useState(initialText),[plan,setPlan]=useState(null),[loading,setLoading]=useState(false),[error,setError]=useState(''),[approved,setApproved]=useState(false),[undoing,setUndoing]=useState(false),[conversationId,setConversationId]=useState(null),[history,setHistory]=useState([]);
+  const[text,setText]=useState(initialText),[plan,setPlan]=useState(null),[loading,setLoading]=useState(false),[planningStage,setPlanningStage]=useState(''),[error,setError]=useState(''),[approved,setApproved]=useState(false),[undoing,setUndoing]=useState(false),[conversationId,setConversationId]=useState(null),[history,setHistory]=useState([]),planningTimers=useRef([]);
+  function clearPlanningTimers(){planningTimers.current.forEach(clearTimeout);planningTimers.current=[];}
+  useEffect(()=>clearPlanningTimers,[]);
   async function parse(){
-    const prompt=text.trim();if(!prompt)return;setLoading(true);setError('');setPlan(null);
+    const prompt=text.trim();if(!prompt)return;clearPlanningTimers();setLoading(true);setPlanningStage('context');setError('');setPlan(null);planningTimers.current=[setTimeout(()=>setPlanningStage('request'),700),setTimeout(()=>setPlanningStage('slow'),15000)];
     try{let id=conversationId;if(!id){const conversation=await api.createAiConversation(scope,prompt.slice(0,60));id=conversation.id;setConversationId(id);}const value=await api.createAiPlan(scope,prompt,locale,id);setPlan(value);setHistory(current=>[...current,{role:'user',content:prompt},{role:'assistant',content:value.summary||`${value.operations.length} operations`}].slice(-8));}
-    catch(e){setError(errorMessage(e));}finally{setLoading(false);}
+    catch(e){setError(errorMessage(e));}finally{clearPlanningTimers();setPlanningStage('');setLoading(false);}
   }
   async function execute(){setLoading(true);setError('');try{const result=await api.executeAiPlan(plan.id,{idempotencyKey:idempotencyKey(),confirmed:approved,confirmDestructive:approved&&plan.destructive});setPlan({...plan,status:'executed',result});onExecuted?.(result);}catch(e){setError(errorMessage(e));}finally{setLoading(false);}}
   async function undo(){setUndoing(true);setError('');try{await api.undoAiPlan(plan.id,idempotencyKey());setPlan({...plan,status:'undone'});onExecuted?.({status:'undone'});}catch(e){setError(errorMessage(e));}finally{setUndoing(false);}}
@@ -23,6 +25,7 @@ export default function AiCommandPanel({scope='personal',initialText='',onExecut
     {history.length>0&&<div className="ai-conversation-history">{history.slice(-4).map((message,index)=><div className={message.role} key={index}><span>{message.role==='user'?(locale==='en'?'You':'你'):'AI'}</span><p>{message.content}</p></div>)}</div>}
     <textarea className="ai-textarea assistant-textarea" placeholder={t(scope==='personal'?'ai.personalCommandPlaceholder':'ai.publicCommandPlaceholder')} value={text} onChange={e=>setText(e.target.value)} disabled={loading}/>
     {error&&<div className="error-text">{error}</div>}
+    {loading&&!plan&&planningStage&&<div className={`ai-request-progress ${planningStage==='slow'?'slow':''}`} role="status"><span className="ai-progress-spinner"/><div><strong>{t(`ai.planningStages.${planningStage}`)}</strong><small>{t('ai.planningHint')}</small></div></div>}
     {!plan?<button className="icon-btn primary assistant-primary" disabled={loading||!text.trim()} onClick={parse}>{t(loading?'ai.parsing':'ai.plan')}</button>:<div className="ai-plan-preview">
       <div className="ai-plan-summary"><strong>{locale==='en'?`${plan.operations.length} planned operations`:`计划执行 ${plan.operations.length} 项操作`}</strong><button className="text-btn" onClick={()=>{setPlan(null);setApproved(false);}}>{t('ai.reparse')}</button></div>
       {(plan.summary||plan.suggestions?.length>0)&&<section className="ai-planning-notes"><div className="ai-planning-title"><ContentIcon value="icon:assistant" size={18}/><div><strong>{locale==='en'?'AI planning rationale':'AI 规划思路'}</strong>{plan.summary&&<p>{plan.summary}</p>}</div></div>{plan.suggestions?.length>0&&<ul>{plan.suggestions.map((suggestion,index)=><li key={index}>{suggestion}</li>)}</ul>}</section>}
