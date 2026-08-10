@@ -64,10 +64,12 @@ function BatchMoveBar({
   onToggleAll,
   onClear,
   onMove,
+  onRecognize,
   onDelete,
   onShare,
   moving,
   deleting,
+  recognizing,
 }) {
   const { t, locale } = useI18n();
   return (
@@ -75,7 +77,7 @@ function BatchMoveBar({
       <span>{t("batch.selected", { count: selectedCount })}</span>
       <button
         className={`icon-btn batch-select-toggle ${allVisibleSelected ? "active" : ""}`}
-        disabled={!visibleCount || moving || deleting}
+        disabled={!visibleCount || moving || deleting || recognizing}
         onClick={onToggleAll}
       >
         <span className="batch-select-box">
@@ -102,21 +104,33 @@ function BatchMoveBar({
           </select>
           <button
             className="icon-btn primary"
-            disabled={moving || deleting || !target}
+            disabled={moving || deleting || recognizing || !target}
             onClick={onMove}
           >
             <Icon name="folder" size={14} />
             {t(moving ? "batch.moving" : "batch.move")}
           </button>
+          <button
+            className="icon-btn batch-identify-btn"
+            disabled={moving || deleting || recognizing}
+            onClick={onRecognize}
+          >
+            <Icon name={recognizing ? "refresh" : "globe"} size={14} />
+            {t(recognizing ? "batch.identifying" : "batch.identify")}
+          </button>
           {onShare && (
-            <button className="icon-btn" disabled={deleting} onClick={onShare}>
+            <button
+              className="icon-btn"
+              disabled={deleting || recognizing}
+              onClick={onShare}
+            >
               <Icon name="link" size={14} />
               {locale === "en" ? "Share" : "共享"}
             </button>
           )}
           <button
             className="icon-btn batch-delete-btn"
-            disabled={moving || deleting}
+            disabled={moving || deleting || recognizing}
             onClick={onDelete}
           >
             <Icon name="trash" size={14} />
@@ -193,6 +207,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     [batchCategory, setBatchCategory] = useState(""),
     [moving, setMoving] = useState(false),
     [deleting, setDeleting] = useState(false),
+    [recognizing, setRecognizing] = useState(false),
     [assistantRequest, setAssistantRequest] = useState(null);
   const spaceReady =
     identityKey !== null &&
@@ -431,7 +446,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     event.dataTransfer.setData("text/plain", ids.join(","));
   }
   async function moveItems(ids, categoryId) {
-    if (!canManage || !ids.length || moving || deleting) return;
+    if (!canManage || !ids.length || moving || deleting || recognizing) return;
     setMoving(true);
     setError("");
     try {
@@ -446,9 +461,30 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       setMoving(false);
     }
   }
+  async function recognizeSelectedItems() {
+    const ids = [...selectedIds];
+    if (!canManage || !ids.length || moving || deleting || recognizing) return;
+    if (!confirm(t("batch.confirmIdentify", { count: ids.length }))) return;
+    setRecognizing(true);
+    setError("");
+    try {
+      const result = await api.bulkInspectItems(space, ids);
+      toastMessage(
+        t("batch.identified", {
+          updated: result.updatedCount,
+          failed: result.failedCount,
+        }),
+      );
+      await load();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setRecognizing(false);
+    }
+  }
   async function deleteSelectedItems() {
     const ids = [...selectedIds];
-    if (!canManage || !ids.length || moving || deleting) return;
+    if (!canManage || !ids.length || moving || deleting || recognizing) return;
     if (!confirm(t("batch.confirmDelete", { count: ids.length }))) return;
     setDeleting(true);
     setError("");
@@ -690,6 +726,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
             onClear={() => setSelectedIds(new Set())}
             moving={moving}
             deleting={deleting}
+            recognizing={recognizing}
             onShare={
               space === "personal"
                 ? () => {
@@ -707,6 +744,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
               )
             }
             onDelete={deleteSelectedItems}
+            onRecognize={recognizeSelectedItems}
           />
         ) : (
           <span>{t("app.total", { count: items.length })}</span>
