@@ -130,6 +130,12 @@ function createLatestSchema(db) {
       browser_family TEXT,
       os_family TEXT,
       device_class TEXT,
+      ip_prefix TEXT,
+      country_code TEXT,
+      item_name TEXT,
+      item_url TEXT,
+      item_description TEXT,
+      item_icon TEXT,
       properties_json TEXT NOT NULL DEFAULT '{}'
     );
     CREATE TABLE IF NOT EXISTS command_executions (
@@ -306,6 +312,31 @@ function migrateCurrentSchema(db) {
       addColumnIfMissing(db, 'users', 'email TEXT');
       addColumnIfMissing(db, 'users', "preferences_json TEXT NOT NULL DEFAULT '{}'");
       db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(4)').run();
+    })();
+  }
+  if (!applied.has(5)) {
+    db.transaction(() => {
+      addColumnIfMissing(db, 'analytics_events', 'ip_prefix TEXT');
+      addColumnIfMissing(db, 'analytics_events', 'country_code TEXT');
+      addColumnIfMissing(db, 'analytics_events', 'item_name TEXT');
+      addColumnIfMissing(db, 'analytics_events', 'item_url TEXT');
+      addColumnIfMissing(db, 'analytics_events', 'item_description TEXT');
+      addColumnIfMissing(db, 'analytics_events', 'item_icon TEXT');
+      db.exec(`
+        UPDATE analytics_events
+        SET item_name=COALESCE(item_name,(SELECT name FROM items WHERE items.id=analytics_events.item_id)),
+            item_url=COALESCE(item_url,(SELECT url FROM items WHERE items.id=analytics_events.item_id)),
+            item_description=COALESCE(item_description,(SELECT description FROM items WHERE items.id=analytics_events.item_id)),
+            item_icon=COALESCE(item_icon,(SELECT icon FROM items WHERE items.id=analytics_events.item_id))
+        WHERE item_id IS NOT NULL;
+        UPDATE analytics_events
+        SET item_name=COALESCE(item_name,(SELECT json_extract(metadata_json,'$.before.name') FROM security_audit_events WHERE event_type='item.deleted' AND target_id=CAST(analytics_events.item_id AS TEXT) ORDER BY occurred_at_ms DESC LIMIT 1)),
+            item_url=COALESCE(item_url,(SELECT json_extract(metadata_json,'$.before.url') FROM security_audit_events WHERE event_type='item.deleted' AND target_id=CAST(analytics_events.item_id AS TEXT) ORDER BY occurred_at_ms DESC LIMIT 1)),
+            item_description=COALESCE(item_description,(SELECT json_extract(metadata_json,'$.before.description') FROM security_audit_events WHERE event_type='item.deleted' AND target_id=CAST(analytics_events.item_id AS TEXT) ORDER BY occurred_at_ms DESC LIMIT 1)),
+            item_icon=COALESCE(item_icon,(SELECT json_extract(metadata_json,'$.before.icon') FROM security_audit_events WHERE event_type='item.deleted' AND target_id=CAST(analytics_events.item_id AS TEXT) ORDER BY occurred_at_ms DESC LIMIT 1))
+        WHERE item_id IS NOT NULL AND item_name IS NULL;
+      `);
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(5)').run();
     })();
   }
 }

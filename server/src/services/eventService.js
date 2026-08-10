@@ -18,7 +18,8 @@ function clientInfo(req) {
   const browser = /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Other';
   const os = /Windows/.test(ua) ? 'Windows' : /Mac OS|Macintosh/.test(ua) ? 'macOS' : /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Linux/.test(ua) ? 'Linux' : 'Other';
   const device = /iPad|Tablet/.test(ua) ? 'tablet' : /Mobile|Android|iPhone/.test(ua) ? 'mobile' : 'desktop';
-  return { ipPrefix: ipPrefix(req?.ip), browser, os, device };
+  const country = String(req?.header?.('cf-ipcountry') || req?.header?.('x-country-code') || req?.header?.('x-vercel-ip-country') || '').trim().toUpperCase();
+  return { ipPrefix: ipPrefix(req?.ip), country: /^[A-Z]{2}$/.test(country) ? country : null, browser, os, device };
 }
 function safeValue(value, blocked, depth = 0) {
   if (depth > 3) return '[truncated]';
@@ -36,8 +37,8 @@ function writeAudit(targetDb, req, eventType, { outcome = 'success', targetType 
 }
 function audit(req, eventType, options = {}) { writeAudit(db, req, eventType, options); }
 function auditWith(targetDb, req, eventType, options = {}) { writeAudit(targetDb, req, eventType, options); }
-function analytics(req, eventName, { itemId = null, categoryId = null, scope = null, surface = null, viewMode = null, properties = {}, eventId = null } = {}) {
+function analytics(req, eventName, { itemId = null, categoryId = null, scope = null, surface = null, viewMode = null, resource = null, properties = {}, eventId = null } = {}) {
   const client = clientInfo(req); const id = eventId && /^[a-zA-Z0-9_-]{8,100}$/.test(eventId) ? eventId : crypto.randomUUID();
-  try { db.prepare(`INSERT INTO analytics_events(id,occurred_at_ms,event_name,user_id,item_id,category_id,scope,surface,view_mode,browser_family,os_family,device_class,properties_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id,Date.now(),eventName,req?.auth?.user?.id||null,itemId,categoryId,scope,surface,viewMode,client.browser,client.os,client.device,JSON.stringify(safeMetadata(properties))); return true; } catch (error) { if (String(error.code).includes('CONSTRAINT')) return false; throw error; }
+  try { db.prepare(`INSERT INTO analytics_events(id,occurred_at_ms,event_name,user_id,item_id,category_id,scope,surface,view_mode,browser_family,os_family,device_class,ip_prefix,country_code,item_name,item_url,item_description,item_icon,properties_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id,Date.now(),eventName,req?.auth?.user?.id||null,itemId,categoryId,scope,surface,viewMode,client.browser,client.os,client.device,client.ipPrefix,client.country,resource?.name||null,resource?.url||null,resource?.description||null,resource?.icon||null,JSON.stringify(safeMetadata(properties))); return true; } catch (error) { if (String(error.code).includes('CONSTRAINT')) return false; throw error; }
 }
 module.exports = { audit, auditWith, analytics, clientInfo, ipPrefix, safeMetadata };

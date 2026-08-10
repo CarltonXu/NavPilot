@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "NavPilot Bookmarks Bridge",
+  "version": "1.0.0",
+  "description": "将 Chrome 书签安全地导入 NavPilot。",
+  "permissions": ["bookmarks"],
+  "background": { "service_worker": "service-worker.js" },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -13,10 +13,13 @@ function user(id='domain-user'){db.prepare("INSERT OR IGNORE INTO users(id,usern
 test('latest schema includes versions and AI execution tables',()=>{
   const itemColumns=db.prepare('PRAGMA table_info(items)').all().map(x=>x.name);
   const categoryColumns=db.prepare('PRAGMA table_info(categories)').all().map(x=>x.name);
+  const analyticsColumns=db.prepare('PRAGMA table_info(analytics_events)').all().map(x=>x.name);
   assert.ok(itemColumns.includes('version'));assert.ok(itemColumns.includes('updated_at'));
   assert.ok(categoryColumns.includes('version'));assert.ok(categoryColumns.includes('updated_at'));assert.ok(categoryColumns.includes('parent_id'));
   assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='ai_plans'").get());
   assert.ok(db.prepare('SELECT 1 FROM schema_migrations WHERE version=3').get());
+  assert.ok(db.prepare('SELECT 1 FROM schema_migrations WHERE version=5').get());
+  assert.ok(['ip_prefix','country_code','item_name','item_url','item_description','item_icon'].every(column=>analyticsColumns.includes(column)));
 });
 
 test('navigation service moves items and rejects stale updates',()=>{

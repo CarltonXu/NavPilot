@@ -79,6 +79,16 @@ test('admin account operations protect administrators and audit responses pagina
   assert.equal(result.body.pagination.page, 2);
   assert.ok(result.body.items.length > 0 && result.body.items.length <= 20);
 
+  result = await request('/api/admin/analytics/summary?days=30');
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.trend.length, 30);
+  assert.ok(Array.isArray(result.body.topResources));
+  assert.ok(Array.isArray(result.body.heatmap));
+  assert.ok(Array.isArray(result.body.regions));
+  assert.equal(typeof result.body.summary.onlineUsers, 'number');
+  assert.equal(typeof result.body.summary.aiUses, 'number');
+  assert.equal(typeof result.body.ownership.averagePersonalResources, 'number');
+
   result = await request(`/api/admin/users/${member.id}`, { method: 'PATCH', body: JSON.stringify({ username: 'member-renamed', displayName: 'Renamed Member', status: 'disabled' }) });
   assert.equal(result.response.status, 409);
   assert.equal(result.body.code, 'USERNAME_IMMUTABLE');
