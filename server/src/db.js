@@ -161,6 +161,8 @@ function createLatestSchema(db) {
       locale TEXT NOT NULL,
       input_hash TEXT NOT NULL,
       provider_model TEXT,
+      summary TEXT,
+      suggestions_json TEXT NOT NULL DEFAULT '[]',
       operations_json TEXT NOT NULL,
       warnings_json TEXT NOT NULL DEFAULT '[]',
       expected_versions_json TEXT NOT NULL DEFAULT '{}',
@@ -344,6 +346,13 @@ function migrateCurrentSchema(db) {
     db.transaction(() => {
       addColumnIfMissing(db, 'items', "tags_json TEXT NOT NULL DEFAULT '[]'");
       db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(6)').run();
+    })();
+  }
+  if (!applied.has(7)) {
+    db.transaction(() => {
+      addColumnIfMissing(db, 'ai_plans', 'summary TEXT');
+      addColumnIfMissing(db, 'ai_plans', "suggestions_json TEXT NOT NULL DEFAULT '[]'");
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(7)').run();
     })();
   }
 }

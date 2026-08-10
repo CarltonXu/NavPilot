@@ -261,12 +261,12 @@ function hash(value) {
     .update(JSON.stringify(value))
     .digest("hex");
 }
-function createPlan({ actor, current, locale, text, commands, model }) {
+function createPlan({ actor, current, locale, text, commands, model, summary = "", suggestions = [] }) {
   const canonical = canonicalize(commands, current),
     id = crypto.randomUUID(),
     now = Date.now();
   db.prepare(
-    `INSERT INTO ai_plans(id,actor_user_id,realm_scope,realm_owner_id,status,locale,input_hash,provider_model,operations_json,warnings_json,expected_versions_json,created_at_ms,expires_at_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO ai_plans(id,actor_user_id,realm_scope,realm_owner_id,status,locale,input_hash,provider_model,summary,suggestions_json,operations_json,warnings_json,expected_versions_json,created_at_ms,expires_at_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   ).run(
     id,
     actor.id,
@@ -276,6 +276,8 @@ function createPlan({ actor, current, locale, text, commands, model }) {
     locale,
     hash(text),
     model,
+    String(summary || "").trim().slice(0, 300) || null,
+    JSON.stringify((Array.isArray(suggestions) ? suggestions : []).map((value) => String(value).trim().slice(0, 240)).filter(Boolean).slice(0, 8)),
     JSON.stringify(canonical.operations),
     "[]",
     JSON.stringify(canonical.expectedVersions),
@@ -290,6 +292,8 @@ function serializePlan(row) {
     id: row.id,
     status: row.status,
     scope: row.realm_scope,
+    summary: row.summary || "",
+    suggestions: JSON.parse(row.suggestions_json || "[]"),
     operations: JSON.parse(row.operations_json),
     warnings: JSON.parse(row.warnings_json || "[]"),
     destructive: JSON.parse(row.operations_json).some(

@@ -39,8 +39,10 @@ import PersonalToolsModal from "./components/PersonalToolsModal.jsx";
 import GlobalSearch from "./components/GlobalSearch.jsx";
 import RecognitionResultDialog from "./components/RecognitionResultDialog.jsx";
 
-const validView = (value) =>
-  ["card", "compact", "dense"].includes(value) ? value : "card";
+const validView = (value) => {
+  const migrated = value === "dense" ? "board" : value;
+  return ["card", "compact", "board"].includes(migrated) ? migrated : "card";
+};
 const defaultFavicon = document.querySelector('link[rel="icon"]')?.href || "";
 
 function Brand({ branding }) {
@@ -742,8 +744,8 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       className={
         viewMode === "compact"
           ? "compact-list"
-          : viewMode === "dense"
-            ? "dense-grid"
+          : viewMode === "board"
+            ? "board-resource-list"
             : "grid"
       }
     >
@@ -999,23 +1001,43 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
               </div>
             )
           ) : activeCategory !== "all" ? (
-            renderItems(filtered)
-          ) : (
-            [...grouped.entries()].map(([key, list]) => {
-              const label = categoryLabel(key);
-              return (
-                <section className="category-section" key={key}>
-                  <h2 className="category-heading">
-                    <ContentIcon value={label.icon} size={18} />
-                    <span className="eyebrow">{label.name}</span>
-                    <span className="sub">
-                      {t("app.itemsCount", { count: list.length })}
-                    </span>
-                  </h2>
-                  {renderItems(list)}
+            viewMode === "board" ? (
+              <div className="category-board single-column">
+                <section className="board-column">
+                  <header className="board-column-heading">
+                    <span className="board-column-icon"><ContentIcon value={categoryLabel(activeCategory).icon} size={17} /></span>
+                    <strong>{categoryLabel(activeCategory).name}</strong>
+                    <span>{t("app.itemsCount", { count: filtered.length })}</span>
+                  </header>
+                  {renderItems(filtered)}
                 </section>
-              );
-            })
+              </div>
+            ) : renderItems(filtered)
+          ) : (
+            <div className={viewMode === "board" ? "category-board" : undefined}>
+              {[...grouped.entries()].map(([key, list]) => {
+                const label = categoryLabel(key);
+                return viewMode === "board" ? (
+                  <section className="board-column" key={key}>
+                    <header className="board-column-heading">
+                      <span className="board-column-icon"><ContentIcon value={label.icon} size={17} /></span>
+                      <strong>{label.name}</strong>
+                      <span>{t("app.itemsCount", { count: list.length })}</span>
+                    </header>
+                    {renderItems(list)}
+                  </section>
+                ) : (
+                  <section className="category-section" key={key}>
+                    <h2 className="category-heading">
+                      <ContentIcon value={label.icon} size={18} />
+                      <span className="eyebrow">{label.name}</span>
+                      <span className="sub">{t("app.itemsCount", { count: list.length })}</span>
+                    </h2>
+                    {renderItems(list)}
+                  </section>
+                );
+              })}
+            </div>
           )}
         </main>
       </div>

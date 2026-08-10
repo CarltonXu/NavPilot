@@ -29,7 +29,7 @@ const copy = {
     personal: "个人空间",
     card: "卡片",
     compact: "紧凑列表",
-    dense: "密集网格",
+    board: "分类看板",
     save: "保存设置",
     saved: "账户设置已保存",
     current: "当前密码",
@@ -63,7 +63,7 @@ const copy = {
     personal: "My Space",
     card: "Cards",
     compact: "Compact",
-    dense: "Dense",
+    board: "Category board",
     save: "Save settings",
     saved: "Account settings saved",
     current: "Current password",
@@ -92,10 +92,10 @@ export default function UserProfileModal({ onClose }) {
         localStorage.getItem("navpilot_theme") ||
         "dark",
       locale: auth.user.preferences?.locale || locale,
-      viewMode:
-        auth.user.preferences?.viewMode ||
-        localStorage.getItem("navpilot_view_mode_v1") ||
-        "card",
+      viewMode: (() => {
+        const value = auth.user.preferences?.viewMode || localStorage.getItem("navpilot_view_mode_v1") || "card";
+        return value === "dense" ? "board" : value;
+      })(),
       defaultSpace: auth.user.preferences?.defaultSpace || "public",
     },
   });
@@ -345,7 +345,7 @@ export default function UserProfileModal({ onClose }) {
                   >
                     <option value="card">{c.card}</option>
                     <option value="compact">{c.compact}</option>
-                    <option value="dense">{c.dense}</option>
+                    <option value="board">{c.board}</option>
                   </select>
                 </div>
                 <div className="form-row">

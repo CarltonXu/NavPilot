@@ -80,10 +80,10 @@ export default function NavCard({
       </button>
     </div>
   );
-  if (viewMode === "dense")
+  if (viewMode === "board")
     return (
       <div
-        className={`dense-nav-tile selectable-item ${selected ? "selected" : ""}`}
+        className={`board-resource selectable-item ${selected ? "selected" : ""}`}
         {...dragProps}
       >
         {selection}
@@ -92,18 +92,18 @@ export default function NavCard({
           target="_blank"
           rel="noopener noreferrer"
           onClick={onClick}
-          className="dense-nav-main"
+          className="board-resource-main"
           title={`${item.name}\n${item.description || host}`}
         >
-          <span className="dense-icon">
+          <span className="board-resource-icon">
             <ContentIcon value={item.icon} />
           </span>
-          <span className="dense-meta">
+          <span className="board-resource-meta">
             <strong>{item.name}</strong>
-            <small>{host}</small>
+            <small>{item.description || host}</small>
           </span>
           <span
-            className={`dense-status status-${item.status}`}
+            className={`board-resource-status status-${item.status}`}
             aria-label={t(`status.${item.status || "unknown"}`)}
           />
         </a>

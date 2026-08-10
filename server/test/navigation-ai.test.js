@@ -319,6 +319,8 @@ test("AI plans can create nested categories and use them later only after explic
     locale: "zh-CN",
     text: "create nested categories and a link",
     model: "test-model",
+    summary: "按主题创建可维护的两级分类。",
+    suggestions: ["后续可以继续添加同类文档"],
     commands: [
       { op: "category.create", category: "学习" },
       { op: "category.create", category: "文档", parentCategory: "学习" },
@@ -332,6 +334,8 @@ test("AI plans can create nested categories and use them later only after explic
       },
     ],
   });
+  assert.equal(plan.summary, "按主题创建可维护的两级分类。");
+  assert.deepEqual(plan.suggestions, ["后续可以继续添加同类文档"]);
   assert.equal(
     plan.operations[1].input.parent_ref,
     plan.operations[0].createRef,

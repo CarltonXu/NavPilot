@@ -5,7 +5,7 @@ const paths = {
   tag: <><path d="M3 5v6l9 9 8-8-9-9H5a2 2 0 0 0-2 2Z"/><circle cx="8" cy="8" r="1.3"/></>,
   assistant: <><path d="M12 3 14 9l6 2-6 2-2 6-2-6-6-2 6-2 2-6Z" /><path d="m18 3 .7 2.3L21 6l-2.3.7L18 9l-.7-2.3L15 6l2.3-.7L18 3Z" /></>,
   grid: <><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></>,
-  dense: <><rect x="3" y="5" width="5" height="5" rx="1" /><rect x="10" y="5" width="5" height="5" rx="1" /><rect x="17" y="5" width="4" height="5" rx="1" /><rect x="3" y="14" width="5" height="5" rx="1" /><rect x="10" y="14" width="5" height="5" rx="1" /><rect x="17" y="14" width="4" height="5" rx="1" /></>,
+  board: <><rect x="3" y="4" width="8" height="16" rx="2" /><rect x="13" y="4" width="8" height="7" rx="2" /><rect x="13" y="13" width="8" height="7" rx="2" /><path d="M6 8h2m-2 4h2m8-4h2m-2 9h2" /></>,
   list: <><path d="M8 6h13M8 12h13M8 18h13" /><circle cx="4" cy="6" r="1" /><circle cx="4" cy="12" r="1" /><circle cx="4" cy="18" r="1" /></>,
   user: <><circle cx="12" cy="8" r="4" /><path d="M4 21c.8-4 3.5-6 8-6s7.2 2 8 6" /></>,
   building: <><path d="M4 21V5l8-3 8 3v16" /><path d="M9 21v-4h6v4M8 8h1m6 0h1M8 12h1m6 0h1" /></>,
