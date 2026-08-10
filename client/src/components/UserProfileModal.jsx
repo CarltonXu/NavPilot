@@ -29,7 +29,7 @@ const copy = {
     personal: "个人空间",
     card: "卡片",
     compact: "紧凑列表",
-    board: "分类看板",
+    overview: "智能总览",
     save: "保存设置",
     saved: "账户设置已保存",
     current: "当前密码",
@@ -63,7 +63,7 @@ const copy = {
     personal: "My Space",
     card: "Cards",
     compact: "Compact",
-    board: "Category board",
+    overview: "Smart overview",
     save: "Save settings",
     saved: "Account settings saved",
     current: "Current password",
@@ -94,7 +94,7 @@ export default function UserProfileModal({ onClose }) {
       locale: auth.user.preferences?.locale || locale,
       viewMode: (() => {
         const value = auth.user.preferences?.viewMode || localStorage.getItem("navpilot_view_mode_v1") || "card";
-        return value === "dense" ? "board" : value;
+        return ["dense", "board"].includes(value) ? "overview" : value;
       })(),
       defaultSpace: auth.user.preferences?.defaultSpace || "public",
     },
@@ -345,7 +345,7 @@ export default function UserProfileModal({ onClose }) {
                   >
                     <option value="card">{c.card}</option>
                     <option value="compact">{c.compact}</option>
-                    <option value="board">{c.board}</option>
+                    <option value="overview">{c.overview}</option>
                   </select>
                 </div>
                 <div className="form-row">

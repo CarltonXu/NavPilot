@@ -58,8 +58,8 @@ function resolveTarget(item) {
   return item.url;
 }
 
-async function checkItem(item) {
-  if (item.check_method === 'none' || !item.check_enabled) {
+async function checkItem(item, { force = false } = {}) {
+  if (!force && (item.check_method === 'none' || !item.check_enabled)) {
     return { status: 'unknown', latencyMs: null };
   }
   const target = resolveTarget(item);
@@ -74,20 +74,33 @@ async function checkItem(item) {
   return result;
 }
 
-async function checkAndPersist(item) {
-  const result = await checkItem(item);
+async function checkAndPersist(item, options = {}) {
+  const result = await checkItem(item, options);
   db.prepare(`
     UPDATE items SET status = ?, latency_ms = ?, last_checked_at = datetime('now') WHERE id = ?
   `).run(result.status, result.latencyMs, item.id);
   return result;
 }
 
-async function checkItems({ scope = null, ownerId = null } = {}) {
+async function checkItems({ scope = null, ownerId = null, force = false } = {}) {
   let items;
-  if (scope) items = db.prepare('SELECT * FROM items WHERE check_enabled=1 AND scope=? AND owner_id IS ?').all(scope, ownerId);
+  if (scope) items = db.prepare(`SELECT * FROM items WHERE ${force ? '1=1' : 'check_enabled=1'} AND scope=? AND owner_id IS ?`).all(scope, ownerId);
   else items = db.prepare('SELECT * FROM items WHERE check_enabled=1').all();
-  const results = await Promise.allSettled(items.map((item) => checkAndPersist(item)));
-  return { total: items.length, done: results.length };
+  const results = new Array(items.length);
+  let cursor = 0;
+  async function worker() {
+    while (true) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      try { results[index] = await checkAndPersist(items[index], { force }); }
+      catch { results[index] = { status:'unknown', latencyMs:null }; }
+    }
+  }
+  const concurrency = Math.min(Math.max(1, Number(process.env.CHECK_CONCURRENCY) || 16), items.length || 1);
+  await Promise.all(Array.from({ length: concurrency }, worker));
+  const counts = { online:0, offline:0, unknown:0 };
+  results.forEach((result) => { counts[result?.status] = (counts[result?.status] || 0) + 1; });
+  return { total: items.length, done: results.length, ...counts };
 }
 
 async function checkAllItems() {

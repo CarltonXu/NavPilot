@@ -80,10 +80,10 @@ export default function NavCard({
       </button>
     </div>
   );
-  if (viewMode === "board")
+  if (viewMode === "overview")
     return (
       <div
-        className={`board-resource selectable-item ${selected ? "selected" : ""}`}
+        className={`overview-resource-card selectable-item ${selected ? "selected" : ""}`}
         {...dragProps}
       >
         {selection}
@@ -92,20 +92,21 @@ export default function NavCard({
           target="_blank"
           rel="noopener noreferrer"
           onClick={onClick}
-          className="board-resource-main"
+          className="overview-resource-main"
           title={`${item.name}\n${item.description || host}`}
         >
-          <span className="board-resource-icon">
+          <span className="overview-resource-icon">
             <ContentIcon value={item.icon} />
           </span>
-          <span className="board-resource-meta">
+          <span className="overview-resource-meta">
             <strong>{item.name}</strong>
             <small>{item.description || host}</small>
+            <span>{item.category_name || t("category.uncategorized")}</span>
           </span>
-          <span
-            className={`board-resource-status status-${item.status}`}
-            aria-label={t(`status.${item.status || "unknown"}`)}
-          />
+          <span className="overview-resource-signals">
+            <StatusPill status={item.status} latencyMs={item.latency_ms} checking={checking} />
+            <small>👆 {item.click_count || 0}</small>
+          </span>
         </a>
         {actions}
       </div>

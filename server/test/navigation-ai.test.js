@@ -10,6 +10,8 @@ const {
 const { validateEnvelope } = require("../src/services/ai/commandSchema");
 const { canonicalize, createPlan } = require("../src/services/ai/planService");
 const { executePlan, undoPlan } = require("../src/services/ai/commandExecutor");
+const axios = require("axios");
+const { checkItem, checkAndPersist } = require("../src/services/healthCheck");
 
 function user(id = "domain-user") {
   db.prepare(
@@ -17,6 +19,30 @@ function user(id = "domain-user") {
   ).run(id, id, "Domain User");
   return id;
 }
+
+test("manual checks probe resources even when scheduled monitoring is disabled", async () => {
+  const owner = user("manual-check-user"),
+    current = realm("personal", owner),
+    service = createNavigationService(db),
+    item = service.createItem(current, {
+      name:"Manual target",
+      url:"https://manual-check.example",
+      check_method:"none",
+      check_enabled:false,
+    }).value;
+  assert.equal((await checkItem(item)).status, "unknown");
+  const originalHead = axios.head;
+  let requested = "";
+  axios.head = async (url) => { requested = url; return { status:204 }; };
+  try {
+    const result = await checkAndPersist(item, { force:true });
+    assert.equal(result.status, "online");
+    assert.equal(requested, "https://manual-check.example/");
+    assert.equal(service.getItem(current, item.id).status, "online");
+  } finally {
+    axios.head = originalHead;
+  }
+});
 
 test("latest schema includes versions and AI execution tables", () => {
   const itemColumns = db

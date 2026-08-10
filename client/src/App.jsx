@@ -38,10 +38,11 @@ import {
 import PersonalToolsModal from "./components/PersonalToolsModal.jsx";
 import GlobalSearch from "./components/GlobalSearch.jsx";
 import RecognitionResultDialog from "./components/RecognitionResultDialog.jsx";
+import ResourceOverview from "./components/ResourceOverview.jsx";
 
 const validView = (value) => {
-  const migrated = value === "dense" ? "board" : value;
-  return ["card", "compact", "board"].includes(migrated) ? migrated : "card";
+  const migrated = ["dense", "board"].includes(value) ? "overview" : value;
+  return ["card", "compact", "overview"].includes(migrated) ? migrated : "card";
 };
 const defaultFavicon = document.querySelector('link[rel="icon"]')?.href || "";
 
@@ -700,14 +701,16 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
   async function checkAll() {
     if (!canManage || checkingAll) return;
     setCheckingAll(true);
+    setChecking(new Set(items.map((item) => item.id)));
     try {
-      await api.checkAll(space);
-      toastMessage(t("toast.checkingAll"));
+      const result = await api.checkAll(space);
+      toastMessage(t("toast.checkCompleted", result));
       await load();
     } catch (e) {
       setError(errorMessage(e));
     } finally {
       setCheckingAll(false);
+      setChecking(new Set());
     }
   }
   async function requestDelete(category) {
@@ -744,8 +747,8 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       className={
         viewMode === "compact"
           ? "compact-list"
-          : viewMode === "board"
-            ? "board-resource-list"
+          : viewMode === "overview"
+            ? "overview-resource-list"
             : "grid"
       }
     >
@@ -1000,33 +1003,19 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
                 )}
               </div>
             )
+          ) : viewMode === "overview" ? (
+            <ResourceOverview
+              items={filtered}
+              renderItems={renderItems}
+              onTagSelect={setActiveTag}
+            />
           ) : activeCategory !== "all" ? (
-            viewMode === "board" ? (
-              <div className="category-board single-column">
-                <section className="board-column">
-                  <header className="board-column-heading">
-                    <span className="board-column-icon"><ContentIcon value={categoryLabel(activeCategory).icon} size={17} /></span>
-                    <strong>{categoryLabel(activeCategory).name}</strong>
-                    <span>{t("app.itemsCount", { count: filtered.length })}</span>
-                  </header>
-                  {renderItems(filtered)}
-                </section>
-              </div>
-            ) : renderItems(filtered)
+            renderItems(filtered)
           ) : (
-            <div className={viewMode === "board" ? "category-board" : undefined}>
+            <div>
               {[...grouped.entries()].map(([key, list]) => {
                 const label = categoryLabel(key);
-                return viewMode === "board" ? (
-                  <section className="board-column" key={key}>
-                    <header className="board-column-heading">
-                      <span className="board-column-icon"><ContentIcon value={label.icon} size={17} /></span>
-                      <strong>{label.name}</strong>
-                      <span>{t("app.itemsCount", { count: list.length })}</span>
-                    </header>
-                    {renderItems(list)}
-                  </section>
-                ) : (
+                return (
                   <section className="category-section" key={key}>
                     <h2 className="category-heading">
                       <ContentIcon value={label.icon} size={18} />
