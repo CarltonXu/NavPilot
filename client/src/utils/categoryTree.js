@@ -46,3 +46,29 @@ export function filterByCategory(items, categories, active) {
   const ids=descendantIds(categories,active);
   return items.filter((item) => ids.has(item.category_id));
 }
+
+export function categorySelectionStates(categories, items, selectedIds) {
+  const selected =
+    selectedIds instanceof Set ? selectedIds : new Set(selectedIds || []);
+  const summarize = (list) => {
+    if (!list.length) return "none";
+    const count = list.reduce(
+      (total, item) => total + (selected.has(item.id) ? 1 : 0),
+      0,
+    );
+    if (!count) return "none";
+    return count === list.length ? "all" : "mixed";
+  };
+  const states = {
+    all: summarize(items),
+    uncategorized: summarize(
+      items.filter((item) => item.category_id == null),
+    ),
+  };
+  categories.forEach((category) => {
+    states[category.id] = summarize(
+      filterByCategory(items, categories, category.id),
+    );
+  });
+  return states;
+}

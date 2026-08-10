@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCategoryTree, categoryCounts, descendantIds, filterByCategory, flattenCategoryTree } from './categoryTree.js';
+import { buildCategoryTree, categoryCounts, categorySelectionStates, descendantIds, filterByCategory, flattenCategoryTree } from './categoryTree.js';
 
 const categories=[
   {id:3,name:'监控',parent_id:2,sort_order:0},
@@ -26,5 +26,14 @@ describe('category tree utilities',()=>{
   });
   it('keeps uncategorized resources separate',()=>{
     expect(filterByCategory(items,categories,'uncategorized').map(item=>item.id)).toEqual([5]);
+  });
+  it('reports full and partial selection for category subtrees',()=>{
+    const states=categorySelectionStates(categories,items,new Set([1,2,5]));
+    expect(states.all).toBe('mixed');
+    expect(states[1]).toBe('mixed');
+    expect(states[2]).toBe('mixed');
+    expect(states[3]).toBe('none');
+    expect(states.uncategorized).toBe('all');
+    expect(categorySelectionStates(categories,items,[1,2,3])[1]).toBe('all');
   });
 });

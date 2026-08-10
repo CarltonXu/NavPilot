@@ -25,7 +25,11 @@ import {
   PasswordChangeDialog,
 } from "./components/AuthDialogs.jsx";
 import Icon, { ContentIcon } from "./components/Icon.jsx";
-import { categoryCounts, filterByCategory } from "./utils/categoryTree.js";
+import {
+  categoryCounts,
+  categorySelectionStates,
+  filterByCategory,
+} from "./utils/categoryTree.js";
 import { possibleURL } from "./utils/urlSuggestion.js";
 import {
   beginWorkspaceLoad,
@@ -355,6 +359,10 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       }),
     [items, categories, activeCategory, activeTag, query],
   );
+  const categorySelections = useMemo(
+    () => categorySelectionStates(categories, items, selectedIds),
+    [categories, items, selectedIds],
+  );
   const grouped = useMemo(() => {
     const map = new Map();
     filtered.forEach((item) => {
@@ -455,6 +463,19 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
           filtered.length > 0 && filtered.every((item) => next.has(item.id));
       filtered.forEach((item) =>
         all ? next.delete(item.id) : next.add(item.id),
+      );
+      return next;
+    });
+  }
+  function toggleCategorySelection(categoryId) {
+    if (moving || deleting || recognizing) return;
+    const categoryItems = filterByCategory(items, categories, categoryId);
+    if (!categoryItems.length) return;
+    setSelectedIds((current) => {
+      const next = new Set(current),
+        allSelected = categoryItems.every((item) => next.has(item.id));
+      categoryItems.forEach((item) =>
+        allSelected ? next.delete(item.id) : next.add(item.id),
       );
       return next;
     });
@@ -851,6 +872,9 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
           onRename={renameCategory}
           onDelete={requestDelete}
           onDropItems={dropItems}
+          selectionStates={canManage ? categorySelections : null}
+          onToggleSelection={canManage ? toggleCategorySelection : null}
+          selectionDisabled={moving || deleting || recognizing}
         />
         <main className="content">
           {!ready ? (
