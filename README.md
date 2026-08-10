@@ -207,11 +207,12 @@ npm start               # 后端会自动检测并托管 client/dist，只需暴
 
 ### Chrome Bookmarks 一键导入
 
-普通网页受 Chrome 安全策略限制，不能直接读取浏览器书签。NavPilot 提供一个只申请 `bookmarks` 权限的本地桥接扩展：
+普通网页受 Chrome 安全策略限制，不能直接读取浏览器书签。NavPilot 构建时会自动将只申请 `bookmarks` 权限的桥接扩展打包为 `/downloads/navpilot-bookmarks-extension.zip`，并随服务端静态资源一起发布：
 
-1. 打开 `chrome://extensions` 并开启「开发者模式」。
-2. 点击「加载已解压的扩展程序」，选择项目根目录下的 `chrome-extension`。
-3. 刷新 NavPilot，在「个人空间工具 → 导入资源 → Chrome Bookmarks」中点击读取。
+1. 在「个人空间工具 → 导入资源 → Chrome Bookmarks」中点击下载扩展并解压。
+2. 打开 `chrome://extensions` 并开启「开发者模式」。
+3. 点击「加载已解压的扩展程序」，选择解压后的 `navpilot-bookmarks-extension` 目录。
+4. 刷新 NavPilot，返回 Chrome Bookmarks 导入页并点击读取。
 
 扩展只在带 NavPilot 页面标记的网站中响应读取请求，不读取登录 Cookie，也不会自行上传或修改书签；导入前仍会展示完整预览、重复检查和选择列表。
 

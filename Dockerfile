@@ -4,6 +4,8 @@ WORKDIR /build/client
 COPY client/package.json client/package-lock.json ./
 RUN npm ci
 COPY client/index.html client/vite.config.js ./
+COPY client/scripts ./scripts
+COPY chrome-extension /build/chrome-extension
 COPY client/src ./src
 RUN npm run build
 

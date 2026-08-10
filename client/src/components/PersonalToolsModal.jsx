@@ -50,10 +50,17 @@ const words = {
     preview: "解析并检查",
     readChrome: "读取 Chrome 书签",
     readingChrome: "正在读取…",
+    downloadExtension: "下载 Chrome 扩展",
+    installTitle: "首次使用请安装扩展",
+    installSteps: [
+      "下载并解压 NavPilot Chrome 扩展",
+      "打开 chrome://extensions，开启右上角开发者模式",
+      "点击“加载已解压的扩展程序”，选择解压后的目录，然后刷新本页",
+    ],
+    installedHint: "已经安装并刷新页面？现在可以直接读取浏览器书签。",
     chromeUnavailable:
       "当前浏览器没有检测到 NavPilot 书签扩展。普通网页受浏览器安全限制，无法直接读取书签。",
-    chromeInstall:
-      "请在 Chrome 扩展管理页加载项目中的 chrome-extension 目录，然后刷新本页面。",
+    chromeInstall: "请先下载并安装 NavPilot Chrome 扩展，然后刷新本页面。",
     back: "重新选择导入类型",
     chooseDirectory: "请至少选择一个目录",
   },
@@ -107,10 +114,18 @@ const words = {
     preview: "Parse and check",
     readChrome: "Read Chrome bookmarks",
     readingChrome: "Reading…",
+    downloadExtension: "Download Chrome extension",
+    installTitle: "Install the extension first",
+    installSteps: [
+      "Download and unzip the NavPilot Chrome extension",
+      "Open chrome://extensions and enable Developer mode",
+      "Choose Load unpacked, select the unzipped folder, then refresh this page",
+    ],
+    installedHint: "Already installed and refreshed? You can now read your browser bookmarks.",
     chromeUnavailable:
       "The NavPilot bookmarks extension was not detected. Browser security prevents a normal website from reading bookmarks directly.",
     chromeInstall:
-      "Load the chrome-extension folder in Chrome extensions, then refresh this page.",
+      "Download and install the NavPilot Chrome extension, then refresh this page.",
     back: "Choose another import type",
     chooseDirectory: "Select at least one folder",
   },
@@ -751,6 +766,23 @@ export default function PersonalToolsModal({
                       </span>
                       <h4>{w.chrome}</h4>
                       <p>{w.chromeDesc}</p>
+                      <div className="chrome-install-guide">
+                        <strong>{w.installTitle}</strong>
+                        <ol>
+                          {w.installSteps.map((step) => (
+                            <li key={step}>{step}</li>
+                          ))}
+                        </ol>
+                      </div>
+                      <a
+                        className="icon-btn chrome-download-btn"
+                        href="/downloads/navpilot-bookmarks-extension.zip"
+                        download
+                      >
+                        <Icon name="docs" size={15} />
+                        {w.downloadExtension}
+                      </a>
+                      <small>{w.installedHint}</small>
                       <button
                         className="icon-btn primary"
                         disabled={loading}
@@ -759,7 +791,6 @@ export default function PersonalToolsModal({
                         <Icon name="folder" size={15} />
                         {loading ? w.readingChrome : w.readChrome}
                       </button>
-                      <small>{w.chromeInstall}</small>
                     </div>
                   )}
                   {importPreview}
