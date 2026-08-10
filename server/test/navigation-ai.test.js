@@ -158,6 +158,25 @@ test("navigation service renames categories and bulk moves selected items", () =
       .map((item) => item.category_id),
     [renamed.id, renamed.id],
   );
+  const foreignOwner = user("bulk-foreign"),
+    foreign = service.createItem(realm("personal", foreignOwner), {
+      name: "Foreign bulk",
+      url: "https://foreign-bulk.example",
+    }).value;
+  assert.throws(
+    () => service.bulkDeleteItems(current, [one.id, foreign.id]),
+    (error) => error.code === "ITEM_NOT_FOUND",
+  );
+  assert.equal(service.getItem(current, one.id).id, one.id);
+  const deleted = service.bulkDeleteItems(current, [one.id, two.id]);
+  assert.equal(deleted.value.deletedCount, 2);
+  assert.deepEqual(deleted.value.deletedIds, [one.id, two.id]);
+  assert.equal(
+    service
+      .listItems(current)
+      .filter((item) => [one.id, two.id].includes(item.id)).length,
+    0,
+  );
 });
 
 test("category trees enforce depth and preserve items on subtree delete", () => {

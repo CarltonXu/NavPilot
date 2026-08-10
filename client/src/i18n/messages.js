@@ -13,7 +13,7 @@ export const messages = {
     confirm: { deleteItem: '确定删除「{name}」吗？', clearIdentity: '确定退出当前身份吗？个人空间数据仍会保留，重新设置同名身份不会自动找回（除非用同一浏览器）', deleteCategory: '确定删除该分类吗？其下条目会变为未分类' },
     space: { public: '公共空间', personal: '我的空间', publicDesc: '团队统一维护 · 所有人可见', publicViewing: '团队统一维护 · 当前为展示模式', publicEditing: '团队统一维护 · 当前为编辑模式', editPublic: '编辑公共空间', exitPublicEdit: '退出编辑', personalDesc: '仅自己可见 · 随意添加整理', personalViewing: '仅自己可见 · 当前为展示模式', personalEditing: '仅自己可见 · 当前为编辑模式', editPersonal: '编辑个人空间', exitPersonalEdit: '退出编辑', currentIdentity: '当前身份：{name}', exitIdentity: '退出身份' },
     category: { all: '全部', uncategorized: '未分类', manage: '分类树', manageDesc: '最多三级；删除分类树不会删除资源，资源会归为未分类', icon: '选择图标', newName: '分类名称', newPlaceholder: '例如：研发工具', add: '添加分类', addRoot: '新建分类', addChild: '在「{name}」下新增分类', createTitle: '新建分类', createRootDesc: '创建一个新的一级分类', createChildDesc: '将在「{name}」下创建子分类', createAction: '创建分类', rename: '重命名', renameNamed: '重命名分类「{name}」', deleteNamed: '删除分类「{name}」', expand: '展开「{name}」', collapse: '折叠「{name}」', deleteTitle: '删除分类树', deleteImpact: '将删除「{name}」及其分类树，共 {categories} 个分类，影响 {resources} 个资源。', deleteKeepsItems: '资源不会被删除，将统一转入“未分类”。', checkingAll: '正在探测…' },
-    batch: { selected: '已选择 {count} 项', selectItem: '选择「{name}」', selectVisible: '选择当前结果', unselectVisible: '取消选择当前结果', targetCategory: '目标分类', chooseCategory: '选择目标分类', move: '移动', moving: '移动中…', moved: '已移动 {count} 个资源', clear: '清空选择' },
+    batch: { selected: '已选择 {count} 项', selectItem: '选择「{name}」', selectVisible: '全选当前结果', unselectVisible: '取消全选', targetCategory: '目标分类', chooseCategory: '选择目标分类', move: '移动', moving: '移动中…', moved: '已移动 {count} 个资源', delete: '批量删除', deleting: '删除中…', deleted: '已删除 {count} 个资源', confirmDelete: '确定永久删除已选择的 {count} 个资源吗？此操作不可撤销。', clear: '清空选择' },
     searchSuggestion: { title: '没有找到这个资源', url: '识别到网址：{url}', create: '创建这个资源', createWithAssistant: '交给助手创建', prompt: '请在{space}创建资源「{name}」，网址是 {url}，先生成操作计划供我确认。' },
     status: { online: '在线', offline: '离线', unknown: '未知', checking: '探测中', checkingTitle: '正在探测…' },
     theme: { label: '界面主题', dark: '科技暗', light: '明亮', midnight: '深空', eyecare: '护眼' },
@@ -38,7 +38,7 @@ errors: { generic: '请求失败，请稍后重试', AUTH_REQUIRED: '请先登�
     confirm: { deleteItem: 'Delete “{name}”?', clearIdentity: 'Exit this identity? Personal data will remain, but setting the same name again will not restore it unless you use this browser.', deleteCategory: 'Delete this category? Its items will become uncategorized.' },
     space: { public: 'Public Space', personal: 'My Space', publicDesc: 'Team maintained · Visible to everyone', publicViewing: 'Team maintained · View mode', publicEditing: 'Team maintained · Edit mode', editPublic: 'Edit Public Space', exitPublicEdit: 'Exit editing', personalDesc: 'Private · Organize freely', personalViewing: 'Private · View mode', personalEditing: 'Private · Edit mode', editPersonal: 'Edit My Space', exitPersonalEdit: 'Exit editing', currentIdentity: 'Identity: {name}', exitIdentity: 'Exit identity' },
     category: { all: 'All', uncategorized: 'Uncategorized', manage: 'Category tree', manageDesc: 'Up to three levels. Deleting categories keeps their resources uncategorized.', icon: 'Choose an icon', newName: 'Category name', newPlaceholder: 'e.g. Developer tools', add: 'Add category', addRoot: 'New category', addChild: 'Add a category under “{name}”', createTitle: 'New category', createRootDesc: 'Create a new top-level category', createChildDesc: 'Create a child category under “{name}”', createAction: 'Create category', rename: 'Rename', renameNamed: 'Rename category “{name}”', deleteNamed: 'Delete category “{name}”', expand: 'Expand “{name}”', collapse: 'Collapse “{name}”', deleteTitle: 'Delete category tree', deleteImpact: 'Delete “{name}” and its tree: {categories} categories and {resources} affected resources.', deleteKeepsItems: 'Resources will not be deleted. They will become uncategorized.', checkingAll: 'Checking…' },
-    batch: { selected: '{count} selected', selectItem: 'Select “{name}”', selectVisible: 'Select visible', unselectVisible: 'Unselect visible', targetCategory: 'Target category', chooseCategory: 'Choose a category', move: 'Move', moving: 'Moving…', moved: 'Moved {count} resources', clear: 'Clear selection' },
+    batch: { selected: '{count} selected', selectItem: 'Select “{name}”', selectVisible: 'Select all results', unselectVisible: 'Unselect all', targetCategory: 'Target category', chooseCategory: 'Choose a category', move: 'Move', moving: 'Moving…', moved: 'Moved {count} resources', delete: 'Delete selected', deleting: 'Deleting…', deleted: 'Deleted {count} resources', confirmDelete: 'Permanently delete the {count} selected resources? This cannot be undone.', clear: 'Clear selection' },
     searchSuggestion: { title: 'No matching resource was found', url: 'Detected URL: {url}', create: 'Create this resource', createWithAssistant: 'Create with assistant', prompt: 'Create “{name}” in {space} with URL {url}. Generate a plan for my approval first.' },
     status: { online: 'Online', offline: 'Offline', unknown: 'Unknown', checking: 'Checking', checkingTitle: 'Checking…' },
     theme: { label: 'Interface theme', dark: 'Tech Dark', light: 'Light', midnight: 'Midnight', eyecare: 'Eye Care' },
@@ -57,9 +57,15 @@ errors: { generic: 'Request failed. Please try again.', AUTH_REQUIRED: 'Sign in 
   },
 };
 
+const supplementalAuditEvents = {
+  'zh-CN': { 'item.bulk_deleted': '批量删除资源' },
+  en: { 'item.bulk_deleted': 'Resources bulk deleted' },
+};
+
 export function translateAuditEvent(locale, eventType) {
   const normalized = normalizeLocale(locale);
-  return messages[normalized]?.audit?.events?.[eventType]
+  return supplementalAuditEvents[normalized]?.[eventType]
+    ?? messages[normalized]?.audit?.events?.[eventType]
     ?? messages['zh-CN']?.audit?.events?.[eventType]
     ?? eventType;
 }

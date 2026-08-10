@@ -29,6 +29,7 @@ const paths = {
   check: <path d="m5 12 4 4L19 6" />,
   close: <path d="M6 6l12 12M18 6 6 18" />,
   minus: <path d="M5 12h14" />,
+  trash: <><path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14"/><path d="M10 11v6m4-6v6"/></>,
   more: <><circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/></>,
 };
 export default function Icon({ name, size = 20, className = '' }) { return <svg className={`ui-icon ${className}`} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 4h16v16H4z" opacity=".08" fill="currentColor" stroke="none" />{paths[name] || paths.link}</svg>; }

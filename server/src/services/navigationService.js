@@ -607,6 +607,36 @@ function createNavigationService(db = defaultDb) {
       throw domainError("ITEM_IDS_REQUIRED", "请选择至少一个条目");
     return ids.map((id) => updateItem(current, id, patch));
   }
+  function bulkDeleteItems(current, ids) {
+    if (!Array.isArray(ids) || !ids.length)
+      throw domainError("ITEM_IDS_REQUIRED", "请选择至少一个条目");
+    const normalized = [...new Set(ids.map(Number))];
+    if (
+      normalized.length > 500 ||
+      normalized.some((id) => !Number.isInteger(id) || id <= 0)
+    )
+      throw domainError("ITEM_IDS_INVALID", "批量删除的资源列表无效");
+    const values = normalized.map((id) => getItem(db, current, id));
+    const before = values.map(itemSnapshot),
+      categories = new Set(values.map((item) => item.category_id ?? null)),
+      remove = db.prepare(
+        "DELETE FROM items WHERE id=? AND scope=? AND owner_id IS ?",
+      );
+    values.forEach((item) => remove.run(item.id, current.scope, current.ownerId));
+    categories.forEach((categoryId) =>
+      compactItemOrder(db, current, categoryId),
+    );
+    return {
+      value: {
+        ok: true,
+        deletedCount: values.length,
+        deletedIds: values.map((item) => item.id),
+      },
+      before,
+      after: null,
+      changedFields: ["deleted"],
+    };
+  }
   return {
     db,
     realm,
@@ -619,6 +649,7 @@ function createNavigationService(db = defaultDb) {
     updateItem,
     deleteItem,
     bulkUpdateItems,
+    bulkDeleteItems,
     createCategory,
     updateCategory,
     deleteCategory,
