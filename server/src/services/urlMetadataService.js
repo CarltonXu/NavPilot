@@ -207,12 +207,15 @@ function extractMetadata(html, pageUrl) {
     icon,
   };
 }
+function extractContentText(html) {
+  return cleanText(String(html||'').replace(/<script\b[\s\S]*?<\/script>/gi,' ').replace(/<style\b[\s\S]*?<\/style>/gi,' ').replace(/<svg\b[\s\S]*?<\/svg>/gi,' ').replace(/<nav\b[\s\S]*?<\/nav>/gi,' ').replace(/<footer\b[\s\S]*?<\/footer>/gi,' '),12000);
+}
 
 function createUrlMetadataService({
   request = axios,
   lookup = dns.promises.lookup,
 } = {}) {
-  async function fetchPage(value, { allowPrivate = false } = {}) {
+  async function fetchPage(value, { allowPrivate = false, includeContent = false } = {}) {
     const requested = normalizeRequestedUrl(value);
     let current = requested;
     for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
@@ -286,6 +289,7 @@ function createUrlMetadataService({
         url: requested.href,
         finalUrl: current.href,
         ...metadata,
+        ...(includeContent?{contentText:extractContentText(response.data)}:{}),
       };
     }
     throw metadataError("URL_METADATA_REDIRECT_LIMIT", "网站重定向次数过多");
@@ -297,6 +301,7 @@ module.exports = {
   createUrlMetadataService,
   decodeEntities,
   extractMetadata,
+  extractContentText,
   isPublicAddress,
   normalizeRequestedUrl,
   resolvePublicAddresses,

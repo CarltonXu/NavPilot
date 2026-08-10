@@ -30,6 +30,8 @@ const copy = {
     card: "卡片",
     compact: "紧凑列表",
     overview: "智能总览",
+    aiReports: "AI 主动整理报告",
+    aiReportsHint: "允许系统每周生成个人空间整理报告并发送站内通知",
     save: "保存设置",
     saved: "账户设置已保存",
     current: "当前密码",
@@ -64,6 +66,8 @@ const copy = {
     card: "Cards",
     compact: "Compact",
     overview: "Smart overview",
+    aiReports: "Proactive AI reports",
+    aiReportsHint: "Allow a weekly personal-space organization report and in-app notification",
     save: "Save settings",
     saved: "Account settings saved",
     current: "Current password",
@@ -97,6 +101,7 @@ export default function UserProfileModal({ onClose }) {
         return ["dense", "board"].includes(value) ? "overview" : value;
       })(),
       defaultSpace: auth.user.preferences?.defaultSpace || "public",
+      aiReportsEnabled: auth.user.preferences?.aiReportsEnabled !== false,
     },
   });
   const [password, setPassword] = useState({
@@ -361,6 +366,22 @@ export default function UserProfileModal({ onClose }) {
                     <option value="personal">{c.personal}</option>
                   </select>
                 </div>
+                <label className="checkbox-row profile-report-preference">
+                  <input
+                    type="checkbox"
+                    checked={draft.preferences.aiReportsEnabled}
+                    onChange={(e) =>
+                      setDraft({
+                        ...draft,
+                        preferences: {
+                          ...draft.preferences,
+                          aiReportsEnabled: e.target.checked,
+                        },
+                      })
+                    }
+                  />
+                  <span><strong>{c.aiReports}</strong><small>{c.aiReportsHint}</small></span>
+                </label>
               </div>
             )}
             {tab === "security" && (

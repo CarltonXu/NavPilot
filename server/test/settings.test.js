@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+process.env.NAVPILOT_DB_PATH=':memory:';
+const db=require('../src/db');
 const {
   validateSettingsUpdate,
   maskApiKey,
@@ -53,6 +55,7 @@ test('masks API keys without returning the full value', () => {
   assert.equal(masked, '••••1234');
   assert.equal(masked.includes(key), false);
 });
+test.after(()=>db.close());
 
 test('normalizes locale and parses fenced JSON', () => {
   assert.equal(normalizeLocale('en'), 'en');

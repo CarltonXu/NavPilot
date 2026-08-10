@@ -6,6 +6,8 @@ const {auditWith,analytics}=require('../services/eventService');
 const {createNavigationService,realm}=require('../services/navigationService');
 const {createUrlMetadataService}=require('../services/urlMetadataService');
 const router=express.Router();const navigation=createNavigationService(db),urlMetadata=createUrlMetadataService();
+const{scheduleIndex}=require('../services/ai/runtime');
+router.use((req,res,next)=>{if(!['GET','HEAD'].includes(req.method))res.on('finish',()=>{if(res.statusCode<400){const scope=req.body?.scope||req.item?.scope;if(['public','personal'].includes(scope)&&req.auth?.user)scheduleIndex(req.auth.user,currentRealm(req,scope));}});next();});
 function authorizeScope(req,res,scope,next){if(scope==='public')return requireAdmin(req,res,()=>requirePasswordChanged(req,res,next));if(scope==='personal')return requireUser(req,res,()=>requirePasswordChanged(req,res,next));return res.status(400).json({code:'INVALID_SCOPE',error:'无效空间范围'});}
 function currentRealm(req,scope){return realm(scope,scope==='personal'?req.auth.user.id:null);}
 function sendError(res,error,fallback){return res.status(error.status||500).json({code:error.code||fallback,error:error.status?error.message:'操作失败'});}

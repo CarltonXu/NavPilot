@@ -1,0 +1,10 @@
+const fs=require('fs');
+const path=require('path');
+const crypto=require('crypto');
+const db=require('../db');
+let cachedKey=null;
+function decodeConfigured(value){if(!value)return null;const raw=String(value).trim();if(/^[a-f\d]{64}$/i.test(raw))return Buffer.from(raw,'hex');try{const decoded=Buffer.from(raw,'base64');return decoded.length===32?decoded:null;}catch{return null;}}
+function encryptionKey(){if(cachedKey)return cachedKey;const configured=decodeConfigured(process.env.NAVPILOT_SECRET_KEY);if(configured)return cachedKey=configured;if(process.env.NAVPILOT_DB_PATH===':memory:')return cachedKey=crypto.randomBytes(32);const dbPath=process.env.NAVPILOT_DB_PATH||db.DEFAULT_DB_PATH,file=path.join(path.dirname(dbPath),'.navpilot-secret');try{if(fs.existsSync(file)){const value=decodeConfigured(fs.readFileSync(file,'utf8'));if(value)return cachedKey=value;}const value=crypto.randomBytes(32);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,value.toString('base64'),{mode:0o600,flag:'wx'});return cachedKey=value;}catch(error){if(error.code==='EEXIST'){const value=decodeConfigured(fs.readFileSync(file,'utf8'));if(value)return cachedKey=value;}throw error;}}
+function sealSecret(value){const text=String(value||'');if(!text||text.startsWith('enc:v1:'))return text;const iv=crypto.randomBytes(12),cipher=crypto.createCipheriv('aes-256-gcm',encryptionKey(),iv),encrypted=Buffer.concat([cipher.update(text,'utf8'),cipher.final()]);return`enc:v1:${iv.toString('base64')}:${cipher.getAuthTag().toString('base64')}:${encrypted.toString('base64')}`;}
+function openSecret(value){const text=String(value||'');if(!text.startsWith('enc:v1:'))return text;const[,version,iv,tag,data]=text.split(':');if(version!=='v1'||!iv||!tag||!data)return'';try{const decipher=crypto.createDecipheriv('aes-256-gcm',encryptionKey(),Buffer.from(iv,'base64'));decipher.setAuthTag(Buffer.from(tag,'base64'));return Buffer.concat([decipher.update(Buffer.from(data,'base64')),decipher.final()]).toString('utf8');}catch{return'';}}
+module.exports={sealSecret,openSecret};

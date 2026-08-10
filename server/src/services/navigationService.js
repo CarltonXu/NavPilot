@@ -1,7 +1,7 @@
 const crypto = require("crypto");
 const defaultDb = require("../db");
 
-const selectItem = `SELECT items.id,items.name,items.url,items.icon,items.description,items.tags_json,items.category_id,items.sort_order,items.click_count,items.status,items.latency_ms,items.last_checked_at,items.check_enabled,items.check_method,items.check_target,items.scope,items.owner_id,items.version,items.created_at,items.updated_at,categories.name AS category_name,categories.icon AS category_icon FROM items LEFT JOIN categories ON categories.id=items.category_id`;
+const selectItem = `SELECT items.id,items.name,items.url,items.icon,items.description,items.ai_summary,items.content_hash,items.content_analyzed_at_ms,items.tags_json,items.category_id,items.sort_order,items.click_count,items.status,items.latency_ms,items.last_checked_at,items.check_enabled,items.check_method,items.check_target,items.scope,items.owner_id,items.version,items.created_at,items.updated_at,categories.name AS category_name,categories.icon AS category_icon FROM items LEFT JOIN categories ON categories.id=items.category_id`;
 const selectCategory =
   "SELECT id,name,icon,scope,owner_id,parent_id,sort_order,version,created_at,updated_at FROM categories";
 
@@ -79,6 +79,8 @@ function itemSnapshot(value) {
     url: value.url,
     icon: value.icon,
     description: value.description,
+    aiSummary: value.ai_summary || null,
+    contentAnalyzedAt: value.content_analyzed_at_ms || null,
     tags: normalizeTags(value.tags ?? value.tags_json),
     categoryId: value.category_id,
     categoryName: value.category_name || null,

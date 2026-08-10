@@ -5,6 +5,7 @@ import { useI18n } from "../i18n/LocaleContext.jsx";
 import Icon, { ContentIcon } from "./Icon.jsx";
 import AiCommandPanel from "./AiCommandPanel.jsx";
 import { possibleURL } from "../utils/urlSuggestion.js";
+import AiOrganizePanel from "./AiOrganizePanel.jsx";
 
 export default function AiAssistantWidget({
   aiPersonalEnabled,
@@ -275,6 +276,17 @@ export default function AiAssistantWidget({
                 <Icon name="assistant" size={15} />
                 {t("assistant.operate")}
               </button>
+              {auth.authenticated && (
+                <button
+                  role="tab"
+                  aria-selected={tab === "organize"}
+                  className={tab === "organize" ? "active" : ""}
+                  onClick={() => setTab("organize")}
+                >
+                  <Icon name="grid" size={15} />
+                  {locale === "en" ? "Organize" : "智能整理"}
+                </button>
+              )}
             </div>
             {tab === "search" && (
               <div className="ai-widget-body assistant-body" role="tabpanel">
@@ -404,6 +416,16 @@ export default function AiAssistantWidget({
                     }
                   />
                 )}
+              </div>
+            )}
+            {tab === "organize" && auth.authenticated && (
+              <div className="ai-widget-body assistant-body assistant-organize-body" role="tabpanel">
+                <AiOrganizePanel
+                  initialScope={activeSpace}
+                  isAdmin={auth.isAdmin}
+                  personalEnabled={aiPersonalEnabled}
+                  onResourcesChanged={onResourcesChanged}
+                />
               </div>
             )}
           </section>

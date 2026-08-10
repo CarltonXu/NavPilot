@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+process.env.NAVPILOT_DB_PATH = ":memory:";
+const db = require("../src/db");
 const { extractJson, normalizeEnvelope, parseCommands, parsePlan } = require("../src/services/ai/openAiCompatibleProvider");
 
 test("AI provider extracts embedded arrays and normalizes compatible envelopes", () => {
@@ -29,3 +31,4 @@ test("AI provider preserves advisory summary and suggestions with an executable 
   assert.equal(result.commands.length, 3);
   assert.equal(result.commands[2].parentCategory, "公司资源 / 内部系统");
 });
+test.after(()=>db.close());

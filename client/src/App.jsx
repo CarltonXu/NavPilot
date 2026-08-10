@@ -40,6 +40,7 @@ import GlobalSearch from "./components/GlobalSearch.jsx";
 import RecognitionResultDialog from "./components/RecognitionResultDialog.jsx";
 import ResourceOverview from "./components/ResourceOverview.jsx";
 import { browserPreference } from "./utils/browserPreference.js";
+import NotificationCenter from "./components/NotificationCenter.jsx";
 
 const validView = (value) => {
   const migrated = ["dense", "board"].includes(value) ? "overview" : value;
@@ -939,6 +940,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
               </button>
             </>
           )}
+          {auth.authenticated && <NotificationCenter />}
           <AccountMenu disabled={recognizing} />
           <LocaleSwitcher />
           <ThemeSwitcher theme={theme} onChange={onThemeChange} />

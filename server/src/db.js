@@ -30,6 +30,12 @@ function createLatestSchema(db) {
       email TEXT,
       preferences_json TEXT NOT NULL DEFAULT '{}'
     );
+    CREATE TABLE IF NOT EXISTS ai_domain_policies (
+      hostname TEXT PRIMARY KEY,
+      allow_content INTEGER NOT NULL DEFAULT 0,
+      updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      updated_at_ms INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -64,6 +70,9 @@ function createLatestSchema(db) {
       url TEXT NOT NULL,
       icon TEXT NOT NULL DEFAULT 'icon:link',
       description TEXT NOT NULL DEFAULT '',
+      ai_summary TEXT,
+      content_hash TEXT,
+      content_analyzed_at_ms INTEGER,
       tags_json TEXT NOT NULL DEFAULT '[]',
       category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
       sort_order INTEGER NOT NULL DEFAULT 0,
@@ -184,6 +193,83 @@ function createLatestSchema(db) {
       created_at_ms INTEGER NOT NULL,
       responded_at_ms INTEGER
     );
+    CREATE TABLE IF NOT EXISTS ai_jobs (
+      id TEXT PRIMARY KEY,
+      actor_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK(kind IN ('organize','embedding_index','report')),
+      realm_scope TEXT NOT NULL CHECK(realm_scope IN ('public','personal')),
+      realm_owner_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','failed')),
+      progress INTEGER NOT NULL DEFAULT 0,
+      total INTEGER NOT NULL DEFAULT 0,
+      input_json TEXT NOT NULL DEFAULT '{}',
+      result_json TEXT,
+      error_code TEXT,
+      error_message TEXT,
+      created_at_ms INTEGER NOT NULL,
+      started_at_ms INTEGER,
+      completed_at_ms INTEGER,
+      updated_at_ms INTEGER NOT NULL,
+      CHECK((realm_scope='public' AND realm_owner_id IS NULL) OR (realm_scope='personal' AND realm_owner_id=actor_user_id))
+    );
+    CREATE TABLE IF NOT EXISTS resource_embeddings (
+      item_id INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+      source_hash TEXT NOT NULL,
+      provider_model TEXT NOT NULL,
+      dimensions INTEGER NOT NULL,
+      vector_json TEXT NOT NULL,
+      updated_at_ms INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS ai_conversations (
+      id TEXT PRIMARY KEY,
+      actor_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      realm_scope TEXT NOT NULL CHECK(realm_scope IN ('public','personal')),
+      realm_owner_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      CHECK((realm_scope='public' AND realm_owner_id IS NULL) OR (realm_scope='personal' AND realm_owner_id=actor_user_id))
+    );
+    CREATE TABLE IF NOT EXISTS ai_messages (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL REFERENCES ai_conversations(id) ON DELETE CASCADE,
+      role TEXT NOT NULL CHECK(role IN ('user','assistant')),
+      content TEXT NOT NULL,
+      plan_id TEXT REFERENCES ai_plans(id) ON DELETE SET NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at_ms INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS ai_reports (
+      id TEXT PRIMARY KEY,
+      recipient_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      realm_scope TEXT NOT NULL CHECK(realm_scope IN ('public','personal')),
+      realm_owner_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+      summary TEXT NOT NULL,
+      findings_json TEXT NOT NULL DEFAULT '[]',
+      created_at_ms INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      read_at_ms INTEGER,
+      created_at_ms INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS ai_usage_events (
+      id TEXT PRIMARY KEY,
+      actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      feature TEXT NOT NULL,
+      provider_model TEXT,
+      success INTEGER NOT NULL,
+      latency_ms INTEGER NOT NULL,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      error_code TEXT,
+      created_at_ms INTEGER NOT NULL
+    );
     CREATE INDEX IF NOT EXISTS ai_plans_actor_status_idx ON ai_plans(actor_user_id,status,expires_at_ms);
     CREATE INDEX IF NOT EXISTS command_executions_plan_idx ON command_executions(plan_id,created_at_ms);
     CREATE INDEX IF NOT EXISTS security_audit_time_idx ON security_audit_events(occurred_at_ms DESC,id DESC);
@@ -198,6 +284,12 @@ function createLatestSchema(db) {
     CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS resource_shares_sender_idx ON resource_shares(sender_user_id,created_at_ms DESC);
     CREATE INDEX IF NOT EXISTS resource_shares_recipient_idx ON resource_shares(recipient_user_id,status,created_at_ms DESC);
+    CREATE INDEX IF NOT EXISTS ai_jobs_actor_time_idx ON ai_jobs(actor_user_id,created_at_ms DESC);
+    CREATE INDEX IF NOT EXISTS ai_jobs_status_idx ON ai_jobs(status,updated_at_ms);
+    CREATE INDEX IF NOT EXISTS ai_conversations_actor_time_idx ON ai_conversations(actor_user_id,updated_at_ms DESC);
+    CREATE INDEX IF NOT EXISTS ai_messages_conversation_time_idx ON ai_messages(conversation_id,created_at_ms);
+    CREATE INDEX IF NOT EXISTS notifications_user_time_idx ON notifications(user_id,read_at_ms,created_at_ms DESC);
+    CREATE INDEX IF NOT EXISTS ai_usage_time_idx ON ai_usage_events(created_at_ms DESC,feature);
   `);
 }
 
@@ -353,6 +445,21 @@ function migrateCurrentSchema(db) {
       addColumnIfMissing(db, 'ai_plans', 'summary TEXT');
       addColumnIfMissing(db, 'ai_plans', "suggestions_json TEXT NOT NULL DEFAULT '[]'");
       db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(7)').run();
+    })();
+  }
+  if (!applied.has(8)) {
+    db.transaction(() => {
+      createLatestSchema(db);
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(8)').run();
+    })();
+  }
+  if (!applied.has(9)) {
+    db.transaction(() => {
+      addColumnIfMissing(db, 'items', 'ai_summary TEXT');
+      addColumnIfMissing(db, 'items', 'content_hash TEXT');
+      addColumnIfMissing(db, 'items', 'content_analyzed_at_ms INTEGER');
+      createLatestSchema(db);
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(9)').run();
     })();
   }
 }

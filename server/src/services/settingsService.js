@@ -1,11 +1,13 @@
 const crypto = require('crypto');
 const axios = require('axios');
 const db = require('../db');
+const {sealSecret,openSecret}=require('./secretService');
 
 const AI_DEFAULTS = { baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini' };
 const AI_SETTING_KEYS = { baseURL: 'ai_base_url', apiKey: 'ai_api_key', model: 'ai_model' };
 const AI_MODELS_KEY = 'ai_models_v1';
 const AI_DEFAULT_MODEL_KEY = 'ai_default_model_id';
+const AI_EMBEDDING_KEY = 'ai_embedding_v1';
 const BRANDING_DEFAULTS = { siteName: 'NavPilot', logoUrl: '', faviconUrl: '' };
 const BRANDING_KEYS = { siteName: 'site_name', logoUrl: 'site_logo_url', faviconUrl: 'site_favicon_url' };
 
@@ -67,15 +69,15 @@ function getBrandingSettings() {
 function getStoredAiModels() {
   try {
     const parsed = JSON.parse(getSetting(AI_MODELS_KEY, '[]'));
-    return Array.isArray(parsed) ? parsed.filter((item) => item && item.id && item.model && item.baseURL) : [];
+    return Array.isArray(parsed) ? parsed.filter((item) => item && item.id && item.model && item.baseURL).map(item=>({...item,apiKey:openSecret(item.apiKey)})) : [];
   } catch { return []; }
 }
-function saveAiModels(models) { setSetting(AI_MODELS_KEY, JSON.stringify(models)); }
+function saveAiModels(models) { setSetting(AI_MODELS_KEY, JSON.stringify(models.map(item=>({...item,apiKey:sealSecret(item.apiKey)})))); }
 function effectiveLegacyConfig() {
   const baseURL = resolveValue(AI_SETTING_KEYS.baseURL, 'AI_BASE_URL', AI_DEFAULTS.baseURL);
   const apiKey = resolveValue(AI_SETTING_KEYS.apiKey, 'AI_API_KEY');
   const model = resolveValue(AI_SETTING_KEYS.model, 'AI_MODEL', AI_DEFAULTS.model);
-  return { baseURL:baseURL.value, apiKey:apiKey.value, model:model.value, sources:{baseURL:baseURL.source,apiKey:apiKey.source,model:model.source} };
+  return { baseURL:baseURL.value, apiKey:openSecret(apiKey.value), model:model.value, sources:{baseURL:baseURL.source,apiKey:apiKey.source,model:model.source} };
 }
 function getEffectiveAiConfig() {
   const models = getStoredAiModels();
@@ -87,6 +89,62 @@ function getEffectiveAiConfig() {
     return { baseURL:selected.baseURL, apiKey:selected.apiKey || '', model:selected.model, modelId:selected.id, sources:{baseURL:'database',apiKey:'database',model:'database'} };
   }
   return effectiveLegacyConfig();
+}
+function getEffectiveAiConfigs() {
+  const models=getStoredAiModels();
+  if(!models.length)return[effectiveLegacyConfig()];
+  const enabled=models.filter(item=>item.enabled!==false),defaultId=getSetting(AI_DEFAULT_MODEL_KEY,''),ordered=[...enabled.filter(item=>item.id===defaultId),...enabled.filter(item=>item.id!==defaultId)];
+  return ordered.map(item=>({baseURL:item.baseURL,apiKey:item.apiKey||'',model:item.model,modelId:item.id,sources:{baseURL:'database',apiKey:'database',model:'database'}}));
+}
+function getEmbeddingConfig() {
+  let stored = {};
+  try { stored = JSON.parse(getSetting(AI_EMBEDDING_KEY, '{}')) || {}; } catch { stored = {}; }
+  const chat = getEffectiveAiConfig();
+  return {
+    enabled: stored.enabled === true,
+    baseURL: stored.baseURL || chat.baseURL || AI_DEFAULTS.baseURL,
+    model: stored.model || 'text-embedding-3-small',
+    apiKey: openSecret(stored.apiKey) || chat.apiKey || '',
+  };
+}
+function embeddingView() {
+  const value = getEmbeddingConfig();
+  return { enabled:value.enabled,baseURL:value.baseURL,model:value.model,apiKeyConfigured:Boolean(value.apiKey),maskedApiKey:maskApiKey(value.apiKey) };
+}
+function updateEmbeddingConfig(input = {}) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw validationError('INVALID_EMBEDDING_SETTINGS','Embedding 设置格式无效');
+  const current = getEmbeddingConfig();
+  const apiKeyProvided = Object.prototype.hasOwnProperty.call(input,'apiKey') && String(input.apiKey || '').trim();
+  const value = {
+    enabled: input.enabled === undefined ? current.enabled : Boolean(input.enabled),
+    baseURL: validateBaseURL(input.baseURL ?? current.baseURL),
+    model: validateModel(input.model ?? current.model),
+    apiKey: apiKeyProvided ? validateApiKey(input.apiKey) : current.apiKey,
+  };
+  setSetting(AI_EMBEDDING_KEY, JSON.stringify({...value,apiKey:sealSecret(value.apiKey)}));
+  return embeddingView();
+}
+async function testEmbeddingConnection(input = null) {
+  const config = input ? {
+    ...getEmbeddingConfig(),
+    ...input,
+    baseURL:validateBaseURL(input.baseURL ?? getEmbeddingConfig().baseURL),
+    model:validateModel(input.model ?? getEmbeddingConfig().model),
+    apiKey:String(input.apiKey || '').trim() || getEmbeddingConfig().apiKey,
+  } : getEmbeddingConfig();
+  if (!config.apiKey) throw validationError('INVALID_AI_API_KEY','请先填写 Embedding API Key');
+  const started = Date.now();
+  try {
+    const response = await axios.post(`${config.baseURL.replace(/\/$/,'')}/embeddings`,{model:config.model,input:['NavPilot semantic search connection test']},{headers:{Authorization:`Bearer ${config.apiKey}`,'Content-Type':'application/json'},timeout:15000,maxContentLength:1024*1024});
+    const vector = response.data?.data?.[0]?.embedding;
+    if (!Array.isArray(vector) || !vector.length) throw validationError('AI_INVALID_RESPONSE','Embedding 服务未返回有效向量',502);
+    return {ok:true,latencyMs:Date.now()-started,dimensions:vector.length};
+  } catch (error) {
+    if (error.status) throw error;
+    if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') throw validationError('AI_UPSTREAM_TIMEOUT','Embedding 服务连接超时',504);
+    if ([401,403].includes(error.response?.status)) throw validationError('AI_UPSTREAM_AUTH_FAILED','Embedding 服务鉴权失败，请检查 API Key',502);
+    throw validationError('AI_CONNECTION_FAILED',`Embedding 服务连接失败${error.response?.status ? `（HTTP ${error.response.status}）` : ''}`,502);
+  }
 }
 function aiModelView(item, defaultId, { managed = true, source = 'database' } = {}) {
   return { id:item.id, name:item.name, baseURL:item.baseURL, model:item.model, enabled:item.enabled !== false, isDefault:item.id === defaultId, apiKeyConfigured:Boolean(item.apiKey), maskedApiKey:maskApiKey(item.apiKey), managed, source, createdAt:item.createdAt || null, updatedAt:item.updatedAt || null };
@@ -173,7 +231,7 @@ async function testAiConnection(input = {}) {
 function getAdminSettingsView() {
   const config = getEffectiveAiConfig(), aiModels = getAiModelsView();
   return {
-    aiPersonalEnabled:getSetting('ai_personal_enabled','false') === 'true',
+    aiPersonalEnabled:getSetting('ai_personal_enabled','false') === 'true', proactiveReportsEnabled:getSetting('ai_proactive_reports_enabled','false') === 'true', embedding:embeddingView(),
     branding:getBrandingSettings(), aiModels:aiModels.models, defaultAiModelId:aiModels.defaultId,
     ai:{ baseURL:{value:config.baseURL,source:config.sources.baseURL}, model:{value:config.model,source:config.sources.model}, apiKey:{configured:Boolean(config.apiKey),source:config.sources.apiKey,maskedSuffix:maskApiKey(config.apiKey)} },
   };
@@ -183,6 +241,10 @@ function validateSettingsUpdate(input = {}) {
   if (Object.prototype.hasOwnProperty.call(input,'aiPersonalEnabled')) {
     if (typeof input.aiPersonalEnabled !== 'boolean') throw validationError('INVALID_AI_PERSONAL_ENABLED','个人空间 AI 开关必须是布尔值');
     updates.aiPersonalEnabled = input.aiPersonalEnabled;
+  }
+  if (Object.prototype.hasOwnProperty.call(input,'proactiveReportsEnabled')) {
+    if (typeof input.proactiveReportsEnabled !== 'boolean') throw validationError('INVALID_PROACTIVE_REPORTS_ENABLED','主动整理报告开关必须是布尔值');
+    updates.proactiveReportsEnabled=input.proactiveReportsEnabled;
   }
   if (input.branding !== undefined) {
     if (!input.branding || typeof input.branding !== 'object' || Array.isArray(input.branding)) throw validationError('INVALID_BRANDING_SETTINGS','品牌设置格式无效');
@@ -209,10 +271,21 @@ function updateSystemSettings(input) {
   const updates = validateSettingsUpdate(input);
   db.transaction(() => {
     if (Object.prototype.hasOwnProperty.call(updates,'aiPersonalEnabled')) setSetting('ai_personal_enabled',updates.aiPersonalEnabled?'true':'false');
+    if (Object.prototype.hasOwnProperty.call(updates,'proactiveReportsEnabled')) setSetting('ai_proactive_reports_enabled',updates.proactiveReportsEnabled?'true':'false');
     if (updates.branding) for (const [field,value] of Object.entries(updates.branding)) setSetting(BRANDING_KEYS[field],value);
-    for (const field of ['baseURL','model','apiKey']) if (Object.prototype.hasOwnProperty.call(updates,field)) updates[field] === null ? deleteSetting(AI_SETTING_KEYS[field]) : setSetting(AI_SETTING_KEYS[field],updates[field]);
+    for (const field of ['baseURL','model','apiKey']) if (Object.prototype.hasOwnProperty.call(updates,field)) updates[field] === null ? deleteSetting(AI_SETTING_KEYS[field]) : setSetting(AI_SETTING_KEYS[field],field==='apiKey'?sealSecret(updates[field]):updates[field]);
   })();
   return getAdminSettingsView();
 }
 
-module.exports = { getSetting,setSetting,deleteSetting,getBrandingSettings,getEffectiveAiConfig,getAdminSettingsView,updateSystemSettings,validateSettingsUpdate,maskApiKey,addAiModel,updateAiModel,deleteAiModel,setDefaultAiModel,testAiConnection,validateBaseURL,validateModel,validateApiKey };
+function migrateStoredSecrets() {
+  const legacy=getSettingRow(AI_SETTING_KEYS.apiKey);
+  if(legacy?.value&&!String(legacy.value).startsWith('enc:v1:'))setSetting(AI_SETTING_KEYS.apiKey,sealSecret(legacy.value));
+  const modelsRow=getSettingRow(AI_MODELS_KEY);
+  if(modelsRow?.value){try{const models=JSON.parse(modelsRow.value);if(Array.isArray(models)&&models.some(item=>item?.apiKey&&!String(item.apiKey).startsWith('enc:v1:')))saveAiModels(models.map(item=>({...item,apiKey:openSecret(item.apiKey)})));}catch{/* ignore malformed legacy setting */}}
+  const embeddingRow=getSettingRow(AI_EMBEDDING_KEY);
+  if(embeddingRow?.value){try{const value=JSON.parse(embeddingRow.value);if(value?.apiKey&&!String(value.apiKey).startsWith('enc:v1:'))setSetting(AI_EMBEDDING_KEY,JSON.stringify({...value,apiKey:sealSecret(value.apiKey)}));}catch{/* ignore malformed setting */}}
+}
+migrateStoredSecrets();
+
+module.exports = { getSetting,setSetting,deleteSetting,getBrandingSettings,getEffectiveAiConfig,getEffectiveAiConfigs,getEmbeddingConfig,updateEmbeddingConfig,testEmbeddingConnection,getAdminSettingsView,updateSystemSettings,validateSettingsUpdate,maskApiKey,addAiModel,updateAiModel,deleteAiModel,setDefaultAiModel,testAiConnection,validateBaseURL,validateModel,validateApiKey };

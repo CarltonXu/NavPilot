@@ -23,6 +23,9 @@ test('manages multiple AI models and keeps an enabled default', () => {
   assert.equal(first.baseURL, 'https://ai-one.example/v1');
   assert.equal(first.maskedApiKey, '••••-one');
   assert.equal(Object.hasOwn(first, 'apiKey'), false);
+  const storedModels=db.prepare("SELECT value FROM settings WHERE key='ai_models_v1'").get().value;
+  assert.equal(storedModels.includes('secret-one'),false);
+  assert.equal(storedModels.includes('enc:v1:'),true);
 
   settings = addAiModel({
     name: 'Backup', baseURL: 'https://ai-two.example/v1', model: 'model-two', apiKey: 'secret-two', enabled: true,
