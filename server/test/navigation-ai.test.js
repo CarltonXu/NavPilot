@@ -303,6 +303,31 @@ test("AI command schema rejects unknown operations and planner resolves only cur
   assert.equal(plan.expectedVersions[`item:${item.id}`], item.version);
 });
 
+test("AI planner expands slash-separated category paths from parent to child", () => {
+  const owner = user("category-path-user"),
+    current = realm("personal", owner),
+    service = createNavigationService(db),
+    item = service.createItem(current, {
+      name:"BJ github",
+      url:"https://gitlab.example",
+    }).value;
+  const plan = canonicalize(
+    [
+      { op:"category.create", category:"OnePro/BeiJing Internal" },
+      { op:"item.move", items:["BJ github"], destinationCategory:"OnePro/BeiJing Internal" },
+    ],
+    current,
+  );
+  assert.equal(plan.operations.length, 3);
+  assert.deepEqual(
+    plan.operations.slice(0, 2).map((operation) => operation.display.path),
+    ["OnePro", "OnePro / BeiJing Internal"],
+  );
+  assert.equal(plan.operations[1].input.parent_ref, plan.operations[0].createRef);
+  assert.deepEqual(plan.operations[2].ids, [item.id]);
+  assert.equal(plan.operations[2].patch.category_ref, plan.operations[1].createRef);
+});
+
 test("AI planner refuses ambiguous item references", () => {
   const owner = user("ambiguous-user"),
     service = createNavigationService(db),

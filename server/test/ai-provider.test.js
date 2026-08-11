@@ -18,6 +18,26 @@ test("AI provider accepts command aliases and content blocks", () => {
   assert.deepEqual(commands, [{ op:"item.create", fields:{ name:"GitHub", url:"https://github.com" } }]);
 });
 
+test("AI provider normalizes category names returned in common model fields", () => {
+  const result = parseInstruction({ choices:[{ message:{ content:JSON.stringify({
+    kind:"plan",
+    summary:"创建内部分类",
+    operations:[{ op:"category.create", fields:{ name:"OnePro/BeiJing Internal" } }],
+  }) } }] });
+  assert.equal(result.kind, "plan");
+  assert.deepEqual(result.commands, [
+    { op:"category.create", category:"OnePro/BeiJing Internal" },
+  ]);
+  assert.deepEqual(
+    normalizeEnvelope({ operations:[{ action:"create_group", groupName:"Internal" }] }).operations,
+    [{ op:"category.create", category:"Internal" }],
+  );
+  assert.deepEqual(
+    normalizeEnvelope({ operations:[{ op:"item.move", selector:{ names:["BJ github"] }, category:"OnePro/BeiJing Internal" }] }).operations,
+    [{ op:"item.move", items:["BJ github"], destinationCategory:"OnePro/BeiJing Internal" }],
+  );
+});
+
 test("AI provider preserves advisory summary and suggestions with an executable category plan", () => {
   const result = parsePlan({ choices:[{ message:{ content:JSON.stringify({
     summary:"按使用范围建立企业导航，再按职能细分。",

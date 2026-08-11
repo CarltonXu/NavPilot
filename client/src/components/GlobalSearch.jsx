@@ -21,6 +21,7 @@ const copy = {
     pending: "执行前需要你确认",
     result: "个结果",
     shortcut: "⌘ / Ctrl K",
+    uncategorized: "未分类",
   },
   en: {
     title: "Global search",
@@ -37,6 +38,7 @@ const copy = {
     pending: "Your confirmation is required",
     result: "results",
     shortcut: "⌘ / Ctrl K",
+    uncategorized: "Uncategorized",
   },
 };
 
@@ -231,12 +233,20 @@ export default function GlobalSearch() {
                   <span className="global-result-icon">
                     <ContentIcon value={item.icon} size={20} />
                   </span>
-                  <span>
-                    <strong>{item.name}</strong>
-                    <small>
-                      {item.categoryName || item.description || item.url}
-                    </small>
-                    <em>{item.url}</em>
+                  <span className="global-result-copy">
+                    <strong title={item.name}>{item.name}</strong>
+                    <span
+                      className="global-result-path"
+                      title={item.categoryPath || item.categoryName || c.uncategorized}
+                    >
+                      <Icon name="folder" size={12} />
+                      <span>
+                        {item.categoryPath || item.categoryName || c.uncategorized}
+                      </span>
+                    </span>
+                    <em className="global-result-url" title={item.url}>
+                      {item.url}
+                    </em>
                   </span>
                   <i className={`scope-chip ${item.scope}`}>
                     {item.scope === "personal" ? c.personal : c.public}

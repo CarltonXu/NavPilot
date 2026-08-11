@@ -10,6 +10,7 @@ function planError(code, message, status = 400) {
 function normalize(value) {
   return String(value || "")
     .trim()
+    .replace(/\s*(?:\/|>|＞)\s*/g, " / ")
     .toLocaleLowerCase();
 }
 function resolveOne(values, reference, type) {
@@ -88,6 +89,12 @@ function mapFields(fields, categories) {
   }
   return patch;
 }
+function categoryPathParts(value) {
+  return String(value || "")
+    .split(/\s*(?:\/|>|＞)\s*/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
 function canonicalize(commands, current) {
   const items = navigation.listItems(current),
     categories = navigation.listCategories(current);
@@ -103,38 +110,55 @@ function canonicalize(commands, current) {
       continue;
     }
     if (command.op === "category.create") {
-      const parent = command.parentCategory
-          ? categoryTarget(categories, command.parentCategory)
-          : null,
-        createRef = `category-create-${operations.length + 1}`,
-        pathLabel = parent
-          ? `${parent.path_label || parent.name} / ${command.category}`
-          : command.category;
-      const parentPatch = parent?.createRef
-        ? { parent_ref: parent.createRef }
-        : { parent_id: parent?.id ?? null };
-      operations.push({
-        op: command.op,
-        createRef,
-        input: {
-          name: command.category,
-          icon: command.fields?.icon,
-          ...parentPatch,
-        },
-        display: {
-          name: command.category,
-          parentCategory: parent?.path_label || parent?.name || null,
-          path: pathLabel,
-        },
-      });
-      categories.push({
-        id: createRef,
-        createRef,
-        name: command.category,
-        path_label: pathLabel,
-        parent_id: parent?.id ?? null,
-        version: null,
-      });
+      const parts = categoryPathParts(command.category);
+      if (!parts.length)
+        throw planError("CATEGORY_NAME_REQUIRED", "分类名称不能为空");
+      let parent = command.parentCategory
+        ? categoryTarget(categories, command.parentCategory)
+        : null;
+      for (const [index, name] of parts.entries()) {
+        const pathLabel = parent
+          ? `${parent.path_label || parent.name} / ${name}`
+          : name;
+        const existing = categories.find(
+          (category) => normalize(category.path_label || category.name) === normalize(pathLabel),
+        );
+        if (existing) {
+          parent = existing;
+          continue;
+        }
+        const depth = Number(parent?.depth || 0) + 1;
+        if (depth > 3)
+          throw planError("CATEGORY_DEPTH_EXCEEDED", "分类最多支持三级", 400);
+        const createRef = `category-create-${operations.length + 1}`;
+        const parentPatch = parent?.createRef
+          ? { parent_ref: parent.createRef }
+          : { parent_id: parent?.id ?? null };
+        operations.push({
+          op: command.op,
+          createRef,
+          input: {
+            name,
+            icon: index === parts.length - 1 ? command.fields?.icon : undefined,
+            ...parentPatch,
+          },
+          display: {
+            name,
+            parentCategory: parent?.path_label || parent?.name || null,
+            path: pathLabel,
+          },
+        });
+        parent = {
+          id: createRef,
+          createRef,
+          name,
+          path_label: pathLabel,
+          parent_id: parent?.id ?? null,
+          depth,
+          version: null,
+        };
+        categories.push(parent);
+      }
       continue;
     }
     if (command.op.startsWith("item.")) {
@@ -266,6 +290,8 @@ function canonicalize(commands, current) {
       });
     }
   }
+  if (!operations.length)
+    throw planError("CATEGORY_CONFLICT", "目标分类已经存在", 409);
   return {
     operations,
     expectedVersions: expected,

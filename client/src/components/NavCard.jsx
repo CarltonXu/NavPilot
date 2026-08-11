@@ -101,13 +101,27 @@ export default function NavCard({
           title={`${item.name}\n${item.description || host}`}
         >
           <span className="overview-resource-icon">
-            <ContentIcon value={item.icon} />
+            <ContentIcon value={item.icon} size={28} />
           </span>
-          <span className="overview-resource-meta">
-            <strong>{item.name}</strong>
-            <small>{item.description || host}</small>
-            <span>{item.category_name || t("category.uncategorized")}</span>
-          </span>
+          <div className="overview-resource-meta">
+            <strong className="resource-title" title={item.name}>{item.name}</strong>
+            <small className="resource-url" title={item.url}>{host}</small>
+            <span className="resource-category">
+              {item.category_name || t("category.uncategorized")}
+            </span>
+          </div>
+          <div className="overview-resource-details">
+            <p className="resource-description" title={item.description}>
+              {item.description || "—"}
+            </p>
+            {tags.length > 0 && (
+              <span className="overview-resource-taxonomy">
+              {tags.slice(0, 2).map((tag) => (
+                <i className="resource-tag" key={tag}>#{tag}</i>
+              ))}
+              </span>
+            )}
+          </div>
           <span className="overview-resource-signals">
             <StatusPill status={item.status} latencyMs={item.latency_ms} checking={checking} />
             <small>👆 {item.click_count || 0}</small>
@@ -133,19 +147,23 @@ export default function NavCard({
           <span className="nav-card-icon">
             <ContentIcon value={item.icon} />
           </span>
-          <span className="nav-list-title">
-            <strong>{item.name}</strong>
-            <small>{host}</small>
+          <span className="nav-list-title" title={item.name}>
+            <strong className="resource-title">{item.name}</strong>
+            <small className="resource-url" title={item.url}>{host}</small>
           </span>
-          <span className="nav-list-desc">
-            {tags.length
-              ? tags
-                  .slice(0, 3)
-                  .map((tag) => `#${tag}`)
-                  .join(" ")
-              : item.description}
+          <span className="nav-list-details">
+            <span className="nav-list-desc resource-description" title={item.description}>
+              {item.description || "—"}
+            </span>
+            {tags.length > 0 && (
+              <span className="nav-list-tags">
+                {tags.slice(0, 3).map((tag) => (
+                  <i className="resource-tag" key={tag}>#{tag}</i>
+                ))}
+              </span>
+            )}
           </span>
-          <span className="nav-list-category">
+          <span className="nav-list-category resource-category">
             {item.category_name || t("category.uncategorized")}
           </span>
           <span className="nav-list-status">
@@ -178,20 +196,25 @@ export default function NavCard({
             <ContentIcon value={item.icon} />
           </div>
           <div style={{ minWidth: 0 }}>
-            <div className="nav-card-name">{item.name}</div>
-            <div className="nav-card-url">{host}</div>
+            <div className="nav-card-name resource-title" title={item.name}>{item.name}</div>
+            <div className="nav-card-url resource-url" title={item.url}>{host}</div>
           </div>
         </div>
         {item.description && (
-          <div className="nav-card-desc">{item.description}</div>
+          <div className="nav-card-desc resource-description">{item.description}</div>
         )}
-        {tags.length > 0 && (
-          <div className="nav-card-tags">
+        <div className="nav-card-taxonomy">
+          <span className="resource-category">
+            {item.category_name || t("category.uncategorized")}
+          </span>
+          {tags.length > 0 && (
+            <span className="nav-card-tags">
             {tags.slice(0, 5).map((tag) => (
-              <span key={tag}>#{tag}</span>
+              <i className="resource-tag" key={tag}>#{tag}</i>
             ))}
-          </div>
-        )}
+            </span>
+          )}
+        </div>
         <div className="nav-card-footer">
           <StatusPill
             status={item.status}
