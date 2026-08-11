@@ -11,6 +11,21 @@ const ALLOWED = new Set([
   "category.move",
 ]);
 const MAX_OPERATIONS = 50;
+const UNIVERSAL_ITEM_REFERENCES = new Set([
+  "all",
+  "all items",
+  "all links",
+  "all resources",
+  "everything",
+  "全部",
+  "全部资源",
+  "全部链接",
+  "所有",
+  "所有资源",
+  "所有链接",
+  "全部条目",
+  "所有条目",
+]);
 function schemaError(message) {
   return Object.assign(new Error(message), {
     code: "AI_INVALID_RESPONSE",
@@ -22,6 +37,61 @@ function text(value, max = 500) {
   const result = String(value).trim();
   if (result.length > max) throw schemaError("AI 返回字段过长");
   return result;
+}
+function validateSelector(raw, { allowEmpty = false } = {}) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw))
+    throw schemaError("AI 资源选择条件无效");
+  const value = {};
+  if (raw.all !== undefined) value.all = raw.all === true;
+  if (raw.status !== undefined) {
+    const statuses = Array.isArray(raw.status) ? raw.status : [raw.status];
+    value.status = [...new Set(statuses.map((item) => text(item, 20)))];
+    if (
+      !value.status.length ||
+      value.status.some((item) => !["online", "offline", "unknown"].includes(item))
+    )
+      throw schemaError("AI 资源状态筛选无效");
+  }
+  if (raw.checkEnabled !== undefined) {
+    if (typeof raw.checkEnabled !== "boolean")
+      throw schemaError("AI 探测状态筛选无效");
+    value.checkEnabled = raw.checkEnabled;
+  }
+  if (raw.uncategorized !== undefined) {
+    if (typeof raw.uncategorized !== "boolean")
+      throw schemaError("AI 未分类筛选无效");
+    value.uncategorized = raw.uncategorized;
+  }
+  if (raw.untagged !== undefined) {
+    if (typeof raw.untagged !== "boolean")
+      throw schemaError("AI 无标签筛选无效");
+    value.untagged = raw.untagged;
+  }
+  if (raw.category !== undefined) value.category = text(raw.category, 160);
+  if (raw.includeSubcategories !== undefined)
+    value.includeSubcategories = raw.includeSubcategories !== false;
+  if (raw.tags !== undefined) {
+    const tags = Array.isArray(raw.tags)
+      ? raw.tags
+      : String(raw.tags || "").split(/[,，]/);
+    value.tags = [...new Set(tags.map((tag) => text(tag, 30)).filter(Boolean))].slice(0, 20);
+    if (!value.tags.length) throw schemaError("AI 标签筛选无效");
+  }
+  if (raw.tagMode !== undefined) {
+    value.tagMode = text(raw.tagMode, 10);
+    if (!["any", "all"].includes(value.tagMode))
+      throw schemaError("AI 标签匹配方式无效");
+  }
+  if (raw.text !== undefined) value.text = text(raw.text, 160);
+  if (raw.domain !== undefined) value.domain = text(raw.domain, 160);
+  if (!allowEmpty && !value.all && !Object.keys(value).some((key) => key !== "all"))
+    throw schemaError("AI 资源选择条件不能为空");
+  return value;
+}
+function universalReference(value) {
+  return UNIVERSAL_ITEM_REFERENCES.has(
+    String(value || "").trim().toLocaleLowerCase(),
+  );
 }
 function validateCommand(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw))
@@ -44,6 +114,7 @@ function validateCommand(raw) {
       throw schemaError("AI 条目选择无效");
     value.items = raw.items.map((item) => text(item, 160));
   }
+  if (raw.selector !== undefined) value.selector = validateSelector(raw.selector);
   if (raw.fields !== undefined) {
     if (
       !raw.fields ||
@@ -86,6 +157,17 @@ function validateCommand(raw) {
   }
   if (op === "category.create" && !value.category)
     throw schemaError("新增分类缺少名称");
+  if (
+    op.startsWith("item.") &&
+    op !== "item.create" &&
+    !value.selector &&
+    (universalReference(value.item) ||
+      (value.items?.length === 1 && universalReference(value.items[0])))
+  ) {
+    value.selector = { all: true };
+    delete value.item;
+    delete value.items;
+  }
   return value;
 }
 function validateEnvelope(raw) {
@@ -99,4 +181,10 @@ function validateEnvelope(raw) {
     throw schemaError("AI 操作列表无效");
   return { operations: raw.operations.map(validateCommand) };
 }
-module.exports = { validateEnvelope, ALLOWED, MAX_OPERATIONS };
+module.exports = {
+  validateEnvelope,
+  validateSelector,
+  universalReference,
+  ALLOWED,
+  MAX_OPERATIONS,
+};

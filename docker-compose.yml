@@ -10,15 +10,17 @@ services:
     restart: unless-stopped
     init: true
     ports:
-      - "${NAVPILOT_HTTP_PORT:-8787}:8787"
+      - "${NAVPILOT_HTTP_BIND:-0.0.0.0}:${NAVPILOT_HTTP_PORT:-8787}:8787"
     env_file:
       - ./server/.env
     environment:
       NODE_ENV: "${NAVPILOT_NODE_ENV:-production}"
       PORT: "8787"
       NAVPILOT_DB_PATH: /app/server/data/navpilot.db
+      NAVPILOT_GEOIP_DB_PATH: /app/geoip/GeoLite2-Country.mmdb
     volumes:
       - "${NAVPILOT_DATA_SOURCE:-navpilot-data}:/app/server/data"
+      - ./server/geoip:/app/geoip:ro
     read_only: true
     tmpfs:
       - /tmp:size=16m,noexec,nosuid,nodev

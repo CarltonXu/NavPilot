@@ -1,5 +1,7 @@
 const { getSession, getTokenFromRequest } = require('../services/sessionService');
 const { sanitizeUser } = require('../services/authService');
+const { audit } = require('../services/eventService');
+const { PERMISSIONS, assertPermission, assertRealmPermission } = require('../services/authorizationService');
 
 function optionalSession(req, res, next) {
   const token = getTokenFromRequest(req);
@@ -9,14 +11,45 @@ function optionalSession(req, res, next) {
 }
 
 function requireUser(req, res, next) {
-  if (!req.auth?.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: '请先登录' });
-  return next();
+  return authorizePermission(req, res, PERMISSIONS.AUTHENTICATED, {}, next);
 }
 
 function requireAdmin(req, res, next) {
-  if (!req.auth?.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: '请先登录' });
-  if (req.auth.user.role !== 'admin') return res.status(403).json({ code: 'FORBIDDEN', error: '没有管理员权限' });
-  return next();
+  return authorizePermission(req, res, PERMISSIONS.ADMIN_MANAGE, {}, next);
+}
+
+function recordAuthorizationDenied(req, permission, context = {}) {
+  try {
+    audit(req, 'authorization.denied', {
+      outcome:'failure',
+      targetType:context.scope ? `${context.scope}_space` : 'permission',
+      metadata:{ permission, scope:context.scope || null, method:req.method, path:req.originalUrl || req.url },
+    });
+  } catch { /* an audit failure must not change the authorization decision */ }
+}
+
+function rejectAuthorization(req, res, error, permission, context = {}) {
+  if (error.status === 403) recordAuthorizationDenied(req, permission, context);
+  return res.status(error.status || 403).json({ code:error.code || 'FORBIDDEN', error:error.message });
+}
+
+function authorizePermission(req, res, permission, context, next) {
+  try {
+    assertPermission(req.auth?.user, permission, context || {});
+    return next();
+  } catch (error) {
+    return rejectAuthorization(req, res, error, permission, context);
+  }
+}
+
+function authorizeRealm(req, res, current, access, next) {
+  try {
+    assertRealmPermission(req.auth?.user, current, access);
+    return next();
+  } catch (error) {
+    const permission = current?.scope ? `${current.scope}.${access}` : 'realm.invalid';
+    return rejectAuthorization(req, res, error, permission, { scope:current?.scope });
+  }
 }
 
 function requirePasswordChanged(req, res, next) {
@@ -24,4 +57,4 @@ function requirePasswordChanged(req, res, next) {
   return next();
 }
 
-module.exports = { optionalSession, requireUser, requireAdmin, requireAdminStrict: requireAdmin, requirePasswordChanged };
+module.exports = { optionalSession, requireUser, requireAdmin, requireAdminStrict: requireAdmin, requirePasswordChanged, authorizePermission, authorizeRealm, recordAuthorizationDenied };

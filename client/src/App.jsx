@@ -35,7 +35,7 @@ import {
   failWorkspaceLoad,
 } from "./utils/workspaceSnapshot.js";
 import PersonalToolsModal from "./components/PersonalToolsModal.jsx";
-import GlobalSearch from "./components/GlobalSearch.jsx";
+import GlobalSearch, { openGlobalSearch } from "./components/GlobalSearch.jsx";
 import RecognitionResultDialog from "./components/RecognitionResultDialog.jsx";
 import ResourceOverview from "./components/ResourceOverview.jsx";
 import { browserPreference } from "./utils/browserPreference.js";
@@ -46,6 +46,7 @@ const validView = (value) => {
   return ["card", "compact", "overview"].includes(migrated) ? migrated : "card";
 };
 const defaultFavicon = document.querySelector('link[rel="icon"]')?.href || "";
+const FAVORITES_FILTER = "__navpilot_favorites__";
 
 function Brand({ branding }) {
   return (
@@ -214,6 +215,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
   const auth = useAuth();
   const { t, errorMessage, locale } = useI18n();
   const generation = useRef(0);
+  const favoriteDefaultKey = useRef(null);
   const identityKey = auth.loading
     ? null
     : auth.user
@@ -254,6 +256,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     [recognitionProgress, setRecognitionProgress] = useState(null),
     [recognitionResult, setRecognitionResult] = useState(null),
     [showRecognitionResult, setShowRecognitionResult] = useState(false),
+    [favoriteBusy, setFavoriteBusy] = useState(new Set()),
     [assistantRequest, setAssistantRequest] = useState(null);
   const spaceReady =
     identityKey !== null &&
@@ -265,6 +268,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
         id: Date.now(),
         scope: event.detail?.scope || "personal",
         text: event.detail?.text || "",
+        context: event.detail?.context || null,
       });
     window.addEventListener("navpilot:assistant-request", launch);
     return () =>
@@ -296,6 +300,8 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     setBatchCategory("");
     setRecognitionResult(null);
     setShowRecognitionResult(false);
+    setFavoriteBusy(new Set());
+    favoriteDefaultKey.current = null;
     const preferred =
         browserPreference(
           localStorage.getItem(`navpilot_space_v1:${auth.user?.id}`),
@@ -384,6 +390,20 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     ready = snapshot.key === expectedKey && snapshot.status === "ready";
   const categories = ready ? snapshot.categories : [],
     items = ready ? snapshot.items : [];
+  const favoriteItems = useMemo(() => items.filter(item=>item.is_favorite).sort((a,b)=>Number(b.favorite_at_ms||0)-Number(a.favorite_at_ms||0)),[items]);
+  useEffect(() => {
+    if (!ready || !expectedKey || favoriteDefaultKey.current === expectedKey) return;
+    favoriteDefaultKey.current = expectedKey;
+    setActiveTag(items.some((item) => item.is_favorite) ? FAVORITES_FILTER : "");
+  }, [ready, expectedKey, items]);
+  useEffect(() => {
+    if (
+      ready &&
+      activeTag === FAVORITES_FILTER &&
+      !items.some((item) => item.is_favorite)
+    )
+      setActiveTag("");
+  }, [ready, activeTag, items]);
   const counts = useMemo(() => {
     const value = categoryCounts(categories, items);
     return {
@@ -405,11 +425,12 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     () =>
       filterByCategory(items, categories, activeCategory).filter((item) => {
         const tags = Array.isArray(item.tags) ? item.tags : [];
-        const tagMatch =
-          !activeTag ||
-          tags.some(
-            (tag) => tag.toLocaleLowerCase() === activeTag.toLocaleLowerCase(),
-          );
+        const tagMatch = activeTag === FAVORITES_FILTER
+          ? Boolean(item.is_favorite)
+          : !activeTag ||
+            tags.some(
+              (tag) => tag.toLocaleLowerCase() === activeTag.toLocaleLowerCase(),
+            );
         const textMatch =
           !query.trim() ||
           `${item.name} ${item.url} ${item.description} ${tags.join(" ")}`
@@ -475,6 +496,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       localStorage.setItem(`navpilot_space_v1:${auth.user.id}`, next);
     setSelection({ identityKey, space: next });
     setSnapshot({ key: null, status: "idle", categories: [], items: [] });
+    favoriteDefaultKey.current = null;
     setActiveCategory("all");
     setActiveTag("");
     setQuery("");
@@ -783,6 +805,25 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       }
     );
   }
+  async function toggleFavorite(item) {
+    if (!auth.authenticated) {
+      auth.setLoginOpen(true);
+      return;
+    }
+    if (favoriteBusy.has(item.id)) return;
+    const next=!item.is_favorite,previousAt=item.favorite_at_ms||null;
+    setFavoriteBusy(current=>new Set(current).add(item.id));
+    setSnapshot(previous=>({...previous,items:previous.items.map(value=>value.id===item.id?{...value,is_favorite:next,favorite_at_ms:next?Date.now():null}:value)}));
+    try {
+      const result=await api.setItemFavorite(item.id,next);
+      setSnapshot(previous=>({...previous,items:previous.items.map(value=>value.id===item.id?{...value,is_favorite:result.favorite,favorite_at_ms:result.favoriteAtMs}:value)}));
+    } catch (error) {
+      setSnapshot(previous=>({...previous,items:previous.items.map(value=>value.id===item.id?{...value,is_favorite:item.is_favorite,favorite_at_ms:previousAt}:value)}));
+      setError(errorMessage(error));
+    } finally {
+      setFavoriteBusy(current=>{const value=new Set(current);value.delete(item.id);return value;});
+    }
+  }
   const renderItems = (list) => (
     <div
       className={
@@ -816,6 +857,9 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
           onEdit={() => setEditingItem(item)}
           onDelete={() => deleteItem(item)}
           onRecheck={() => recheck(item)}
+          canFavorite
+          favoriteBusy={favoriteBusy.has(item.id)}
+          onToggleFavorite={() => toggleFavorite(item)}
         />
       ))}
     </div>
@@ -845,6 +889,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       id: Date.now(),
       scope: targetScope,
       text: localeText(targetScope, name, url),
+      context: assistantContext,
     });
   }
   function localeText(targetScope, name, url) {
@@ -871,82 +916,41 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     );
   const allVisibleSelected =
     filtered.length > 0 && filtered.every((item) => selectedIds.has(item.id));
+  const assistantContext = (() => {
+    const category = categories.find((item) => item.id === activeCategory);
+    const selected = items.filter((item) => selectedIds.has(item.id)).slice(0, 30);
+    const spaceName = locale === "en" ? (space === "public" ? "Public Space" : "My Space") : (space === "public" ? "公共空间" : "个人空间");
+    const categoryName = category?.path_label || category?.name || "";
+    const label = [spaceName, categoryName && (locale === "en" ? `Category: ${categoryName}` : `分类：${categoryName}`), selected.length && (locale === "en" ? `${selectedIds.size} selected` : `已选 ${selectedIds.size} 项`)].filter(Boolean).join(" · ");
+    const details = [locale === "en" ? `Current space: ${spaceName}.` : `当前空间：${spaceName}。`];
+    if (categoryName) details.push(locale === "en" ? `Current category: ${categoryName}.` : `当前分类：${categoryName}。`);
+    if (selected.length) details.push(locale === "en" ? `Selected resources: ${selected.map((item) => item.name).join(", ")}.` : `当前选中资源：${selected.map((item) => item.name).join("、")}。`);
+    details.push(locale === "en" ? "Use this context only when the user refers to the current category or selected resources." : "仅当用户提到当前分类或选中资源时使用以上上下文，不要擅自缩小其他指令的范围。");
+    return { label, text:details.join(" ") };
+  })();
+  const spaceActions = <>
+    {auth.authenticated&&!auth.user?.mustChangePassword&&<button className="icon-btn ai-assistant-entry" title={locale==='en'?'Open AI Assistant · Ctrl/⌘ J':'打开 AI 助手 · Ctrl/⌘ J'} onClick={()=>setAssistantRequest({id:Date.now(),scope:space,text:'',context:assistantContext})}><Icon name="assistant" size={16}/>{locale==='en'?'AI Assistant':'AI 助手'}</button>}
+    {auth.isAdmin&&<button className="icon-btn ai-workspace-entry" onClick={()=>{const category=categories.find(item=>item.id===activeCategory);launchAiWorkspace({scope:space,text:category?(locale==='en'?`Analyze the current category “${category.path_label||category.name}” and suggest improvements before creating any plan.`:`请先分析当前分类「${category.path_label||category.name}」的结构和资源，给出优化建议，暂时不要执行修改。`):''});}}><Icon name="grid" size={16}/>{locale==='en'?'AI Workspace':'AI 工作台'}</button>}
+    {canUseSpaceTools&&<button className="icon-btn" disabled={recognizing} onClick={()=>{setPersonalToolsTab("inbox");setShowPersonalTools(true);}}><Icon name="folder" size={16}/>{locale==='en'?'Space tools':'空间工具'}</button>}
+    {canManage&&<><button className="icon-btn" disabled={recognizing} onClick={()=>setEditingItem({category_id:typeof activeCategory==="number"?activeCategory:null})}><Icon name="plus" size={16}/>{t("nav.add")}</button><button className="icon-btn" disabled={checkingAll||recognizing} onClick={checkAll}><Icon name="refresh" size={16}/>{t(checkingAll?"category.checkingAll":"nav.checkAll")}</button></>}
+  </>;
   return (
     <div className="app">
       <header className="topbar">
         <div className="brand">
           <Brand branding={branding} />
         </div>
-        <div className="search-box">
+        <button
+          type="button"
+          className="topbar-search-trigger"
+          onClick={() => openGlobalSearch(query)}
+          aria-label={locale === "en" ? "Open global search" : "打开全局搜索"}
+        >
           <Icon name="search" size={17} />
-          <input
-            placeholder={t("app.search")}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </div>
+          <span>{locale === "en" ? "Search all resources…" : "搜索全部资源…"}</span>
+          <kbd>{navigator.platform?.includes("Mac") ? "⌘ K" : "Ctrl K"}</kbd>
+        </button>
         <div className="topbar-actions">
-          <button className="icon-btn ai-workspace-entry" onClick={()=>{const category=categories.find(item=>item.id===activeCategory);launchAiWorkspace({scope:space,text:category?(locale==='en'?`Analyze the current category “${category.path_label||category.name}” and suggest improvements before creating any plan.`:`请先分析当前分类「${category.path_label||category.name}」的结构和资源，给出优化建议，暂时不要执行修改。`):''});}}><Icon name="assistant" size={16}/>{locale==='en'?'AI Workspace':'AI 工作台'}</button>
-          {canUseSpaceTools && (
-            <button
-              className="icon-btn"
-              disabled={recognizing}
-              onClick={() => {
-                setPersonalToolsTab("inbox");
-                setShowPersonalTools(true);
-              }}
-            >
-              <Icon name="folder" size={16} />
-              {locale === "en"
-                ? "Space tools"
-                : "空间工具"}
-            </button>
-          )}
-          {canManage && (
-            <>
-              <button
-                className="icon-btn"
-                disabled={recognizing}
-                onClick={() =>
-                  setEditingItem({
-                    category_id:
-                      typeof activeCategory === "number"
-                        ? activeCategory
-                        : null,
-                  })
-                }
-              >
-                <Icon name="plus" size={16} />
-                {t("nav.add")}
-              </button>
-              {space === "public" && (
-                <button
-                  className="icon-btn"
-                  disabled={recognizing}
-                  onClick={() => {
-                    const category = categories.find((item) => item.id === activeCategory);
-                    launchAiWorkspace({
-                      scope: "public",
-                      text: locale === "en"
-                        ? `Help me add resources${category ? ` under “${category.path_label || category.name}”` : ""}. First clarify and organize the information, then create a plan for my approval.`
-                        : `帮我${category ? `在「${category.path_label || category.name}」分类下` : ""}添加资源。请先帮我梳理信息，再生成需要我确认的执行方案。`,
-                    });
-                  }}
-                >
-                  <Icon name="assistant" size={16} />
-                  {t("nav.aiAdd")}
-                </button>
-              )}
-              <button
-                className="icon-btn"
-                disabled={checkingAll || recognizing}
-                onClick={checkAll}
-              >
-                <Icon name="refresh" size={16} />
-                {t(checkingAll ? "category.checkingAll" : "nav.checkAll")}
-              </button>
-            </>
-          )}
           <AccountMenu disabled={recognizing} />
           <LocaleSwitcher />
           <ThemeSwitcher theme={theme} onChange={onThemeChange} />
@@ -966,6 +970,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
         onExitPersonalEdit={exitEditModes}
         locked={recognizing}
         lockLabel={t("batch.recognitionLocked")}
+        actions={spaceActions}
       />
       <div className={`content-toolbar ${canManage ? "editing" : ""}`}>
         {canManage ? (
@@ -988,7 +993,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
               setPersonalToolsTab("share");
               setShowPersonalTools(true);
             }}
-            onAi={()=>{const names=items.filter(item=>selectedIds.has(item.id)).slice(0,30).map(item=>`「${item.name}」`).join('、');launchAiWorkspace({scope:space,text:locale==='en'?`Analyze these selected resources and discuss how they should be categorized, tagged, or improved before creating a plan: ${names}`:`请分析我选中的这些资源，先讨论它们应该如何分类、打标签或完善信息，确认后再生成方案：${names}`});}}
+            onAi={()=>{const names=items.filter(item=>selectedIds.has(item.id)).slice(0,30).map(item=>`「${item.name}」`).join('、');setAssistantRequest({id:Date.now(),scope:space,text:locale==='en'?`Analyze these selected resources and prepare an approval plan to categorize, tag, or improve them: ${names}`:`请分析我选中的这些资源，并生成分类、打标签或完善信息的待授权方案：${names}`,context:assistantContext});}}
             onMove={() =>
               moveItems(
                 [...selectedIds],
@@ -1005,7 +1010,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
         )}
         <ViewModeSwitcher value={viewMode} onChange={changeViewMode} />
       </div>
-      {allTags.length > 0 && (
+      {(allTags.length > 0 || favoriteItems.length > 0) && (
         <div className="tag-filter-bar">
           <span>
             <Icon name="tag" size={14} />
@@ -1026,6 +1031,14 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
               #{tag}
             </button>
           ))}
+          {favoriteItems.length > 0 && <button
+            className={`tag-filter-favorite ${activeTag === FAVORITES_FILTER ? "active" : ""}`}
+            onClick={() => setActiveTag(FAVORITES_FILTER)}
+          >
+            <Icon name="star" size={13}/>
+            {locale === "en" ? "Favorites" : "我的收藏"}
+            <strong>{favoriteItems.length}</strong>
+          </button>}
         </div>
       )}
       {error && <div className="error-text portal-error">{error}</div>}
@@ -1132,7 +1145,9 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       <AiAssistantWidget
         aiPersonalEnabled={Boolean(publicSettings.ai_personal_enabled)}
         activeSpace={space}
+        activeContext={assistantContext}
         launchRequest={assistantRequest}
+        onChanged={load}
       />
       {toast && <div className="toast">{toast}</div>}
     </div>
@@ -1199,6 +1214,7 @@ export default function App() {
     logoUrl: "",
     faviconUrl: "",
   };
+  const canAccessWorkspace = !auth.authenticated || auth.isAdmin;
   return (
     <>
       {admin ? (
@@ -1210,7 +1226,7 @@ export default function App() {
             setPublicSettings((current) => ({ ...current, branding: next }))
           }
         />
-      ) : aiWorkspace ? <AiWorkspace theme={theme} onThemeChange={changeTheme} branding={branding} aiPersonalEnabled={Boolean(publicSettings.ai_personal_enabled)}/> : (
+      ) : aiWorkspace ? (canAccessWorkspace?<AiWorkspace theme={theme} onThemeChange={changeTheme} branding={branding} aiPersonalEnabled={Boolean(publicSettings.ai_personal_enabled)}/>:<div className="workspace-access-denied"><Icon name="shield" size={34}/><h2>AI 工作台仅限管理员</h2><p>普通用户请返回主页面，通过顶部“AI 助手”或 Ctrl/⌘ + J 使用快捷指令。</p><button className="icon-btn primary" onClick={()=>{location.href='/'}}>返回主页面</button></div>) : (
         <PortalWorkspace
           theme={theme}
           onThemeChange={changeTheme}

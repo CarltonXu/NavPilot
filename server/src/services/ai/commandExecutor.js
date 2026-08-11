@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const { assertRealmPermission } = require("../authorizationService");
 const db = require("../../db");
 const { createNavigationService, realm } = require("../navigationService");
 const { auditWith } = require("../eventService");
@@ -26,6 +27,19 @@ function verifyExpected(row, current) {
     if (Number(value.version) !== Number(version))
       throw planError("PLAN_STALE", "数据已发生变化，请重新生成计划", 409);
   }
+}
+function captureExpectedVersions(row, current) {
+  const previous = JSON.parse(row.expected_versions_json || "{}");
+  return Object.fromEntries(
+    Object.keys(previous).map((key) => {
+      const separator = key.indexOf(":");
+      const type = key.slice(0, separator), id = key.slice(separator + 1);
+      const value = type === "item"
+        ? navigation.getItem(current, id)
+        : navigation.getCategory(current, id);
+      return [key, Number(value.version)];
+    }),
+  );
 }
 function resolveReferences(value, context) {
   const result = { ...(value || {}) };
@@ -256,11 +270,14 @@ function executePlan({
       400,
     );
   const row = loadPlan(id, actor),
-    requestHash = hash({ id, action: "execute" }),
+    current = realm(row.realm_scope, row.realm_owner_id);
+  assertRealmPermission(actor, current, "manage");
+  const requestHash = hash({ id, action: "execute" }),
     replay = executionByKey(actor.id, idempotencyKey, requestHash);
   if (replay) return replay;
-  if (row.status !== "draft")
-    throw planError("AI_PLAN_ALREADY_EXECUTED", "AI 计划已执行", 409);
+  if (!['draft', 'undone'].includes(row.status))
+    throw planError("AI_PLAN_ALREADY_EXECUTED", "AI 计划当前无法执行", 409);
+  const reapplied = row.status === "undone";
   const operations = JSON.parse(row.operations_json);
   if (
     operations.some((op) => op.destructive || op.op.endsWith(".delete")) &&
@@ -271,7 +288,6 @@ function executePlan({
       "请确认破坏性操作",
       400,
     );
-  const current = realm(row.realm_scope, row.realm_owner_id);
   const result = db.transaction(() => {
     verifyExpected(row, current);
     const results = [],
@@ -285,13 +301,14 @@ function executePlan({
     const value = {
       planId: id,
       status: "executed",
+      reapplied,
       affectedCount: results.reduce(
         (n, x) => n + (Array.isArray(x) ? x.length : 1),
         0,
       ),
     };
     db.prepare(
-      "UPDATE ai_plans SET status='executed',inverse_operations_json=?,result_json=?,executed_at_ms=? WHERE id=?",
+      "UPDATE ai_plans SET status='executed',inverse_operations_json=?,result_json=?,executed_at_ms=?,undone_at_ms=NULL WHERE id=?",
     ).run(JSON.stringify(inverse), JSON.stringify(value), Date.now(), id);
     db.prepare(
       `INSERT INTO command_executions(id,plan_id,actor_user_id,action,idempotency_key,request_hash,status,result_json,created_at_ms,completed_at_ms) VALUES(?,?,?,?,?,?,?,?,?,?)`,
@@ -307,7 +324,7 @@ function executePlan({
       Date.now(),
       Date.now(),
     );
-    auditWith(db, req, "ai.plan.executed", {
+    auditWith(db, req, reapplied ? "ai.plan.reapplied" : "ai.plan.executed", {
       targetType: "ai_plan",
       targetId: id,
       metadata: {
@@ -324,19 +341,21 @@ function undoPlan({ id, actor, req, idempotencyKey }) {
   if (!idempotencyKey || String(idempotencyKey).length < 8)
     throw planError("IDEMPOTENCY_KEY_REQUIRED", "缺少有效幂等键");
   const row = loadPlan(id, actor),
-    requestHash = hash({ id, action: "undo" }),
+    current = realm(row.realm_scope, row.realm_owner_id);
+  assertRealmPermission(actor, current, "manage");
+  const requestHash = hash({ id, action: "undo" }),
     replay = executionByKey(actor.id, idempotencyKey, requestHash);
   if (replay) return replay;
   if (row.status !== "executed" || !row.inverse_operations_json)
     throw planError("UNDO_CONFLICT", "该计划无法撤销", 409);
-  const current = realm(row.realm_scope, row.realm_owner_id);
   return db.transaction(() => {
     const inverse = JSON.parse(row.inverse_operations_json);
     inverse.forEach((op) => applyInverse(current, op));
-    const value = { planId: id, status: "undone" };
+    const expectedVersions = captureExpectedVersions(row, current);
+    const value = { planId: id, status: "undone", canReapply: true };
     db.prepare(
-      "UPDATE ai_plans SET status='undone',undone_at_ms=?,result_json=? WHERE id=?",
-    ).run(Date.now(), JSON.stringify(value), id);
+      "UPDATE ai_plans SET status='undone',undone_at_ms=?,result_json=?,expected_versions_json=? WHERE id=?",
+    ).run(Date.now(), JSON.stringify(value), JSON.stringify(expectedVersions), id);
     db.prepare(
       `INSERT INTO command_executions(id,plan_id,actor_user_id,action,idempotency_key,request_hash,status,result_json,created_at_ms,completed_at_ms) VALUES(?,?,?,?,?,?,?,?,?,?)`,
     ).run(

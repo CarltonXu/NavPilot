@@ -1,7 +1,20 @@
 const test=require('node:test');const assert=require('node:assert/strict');const path=require('path');
 process.env.NAVPILOT_DB_PATH=`/tmp/navpilot-events-${process.pid}.db`;for(const key of Object.keys(require.cache))if(key.includes(`${path.sep}server${path.sep}src${path.sep}`))delete require.cache[key];
-const db=require('../src/db');const{audit,analytics,ipPrefix,safeMetadata}=require('../src/services/eventService');
+const db=require('../src/db');const{audit,analytics,clientInfo,ipPrefix,safeMetadata}=require('../src/services/eventService');
+const{configureTrustedProxy,setGeoReaderForTest}=require('../src/services/proxyGeoService');
 function req(user=null){return{ip:'192.168.10.77',auth:user?{user}:null,header:(name)=>name==='user-agent'?'Mozilla/5.0 (Macintosh) AppleWebKit Chrome/125 Safari/537.36':''};}
 test('minimizes IP and strips secret metadata',()=>{assert.equal(ipPrefix('192.168.10.77'),'192.168.10.0/24');assert.equal(ipPrefix('::1'),'::1/128');assert.deepEqual(safeMetadata({password:'x',apiKey:'y',scope:'public'}),{scope:'public'});audit(req({id:null,username:'tester',role:'user'}),'test.event',{metadata:{token:'x',changedFields:['name']}});const row=db.prepare('SELECT * FROM security_audit_events').get();assert.equal(row.ip_prefix,'192.168.10.0/24');assert.equal(row.metadata_json.includes('token'),false);});
 test('deduplicates analytics event IDs',()=>{assert.equal(analytics(req(),'item.clicked',{eventId:'event-fixed-123',surface:'portal-card'}),true);assert.equal(analytics(req(),'item.clicked',{eventId:'event-fixed-123',surface:'portal-card'}),false);assert.equal(db.prepare('SELECT COUNT(*) n FROM analytics_events WHERE id=?').get('event-fixed-123').n,1);});
 test('keeps a resource snapshot after the original item is deleted',()=>{const info=db.prepare("INSERT INTO items(name,url,description,icon,scope) VALUES(?,?,?,?, 'public')").run('Historical Docs','https://history.example','Saved description','icon:docs');const item={id:Number(info.lastInsertRowid),name:'Historical Docs',url:'https://history.example',description:'Saved description',icon:'icon:docs'};assert.equal(analytics(req(),'item.clicked',{itemId:item.id,scope:'public',resource:item,eventId:'snapshot-event-123'}),true);db.prepare('DELETE FROM items WHERE id=?').run(item.id);const row=db.prepare('SELECT item_name,item_url,item_description,item_icon FROM analytics_events WHERE id=?').get('snapshot-event-123');assert.deepEqual(row,{item_name:item.name,item_url:item.url,item_description:item.description,item_icon:item.icon});});
+test('accepts country headers only from trusted proxies and falls back to GeoIP',()=>{
+  configureTrustedProxy('loopback');setGeoReaderForTest(null);
+  const trusted={ip:'203.0.113.8',socket:{remoteAddress:'127.0.0.1'},header:name=>name==='cf-ipcountry'?'CN':''};
+  assert.deepEqual(clientInfo(trusted).country,'CN');assert.equal(clientInfo(trusted).countrySource,'proxy_header');
+  configureTrustedProxy('10.0.0.0/8');
+  const spoofed={...trusted,socket:{remoteAddress:'198.51.100.4'}};
+  assert.equal(clientInfo(spoofed).country,null);
+  configureTrustedProxy('');setGeoReaderForTest({get:ip=>ip==='8.8.8.8'?{country:{iso_code:'US'}}:null});
+  const direct={ip:'8.8.8.8',socket:{remoteAddress:'8.8.8.8'},header:()=>''};
+  assert.equal(clientInfo(direct).country,'US');assert.equal(clientInfo(direct).countrySource,'geoip_database');
+  setGeoReaderForTest(null);configureTrustedProxy('');
+});

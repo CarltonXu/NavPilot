@@ -5,5 +5,9 @@
 client/dist
 server/data
 server/.env
+server/geoip
+*.mmdb
+GeoLite2-*.tar.gz
+GeoLite2-*.zip
 **/*.log
 coverage

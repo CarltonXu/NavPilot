@@ -40,6 +40,10 @@ const copy = {
   },
 };
 
+export function openGlobalSearch(query = "") {
+  window.dispatchEvent(new CustomEvent("navpilot:global-search", { detail: { query } }));
+}
+
 export default function GlobalSearch() {
   const auth = useAuth();
   const { locale, t } = useI18n();
@@ -53,6 +57,11 @@ export default function GlobalSearch() {
     [active, setActive] = useState(0);
 
   useEffect(() => {
+    function show(event) {
+      if (typeof event.detail?.query === "string") setQuery(event.detail.query);
+      setOpen(true);
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }
     function key(event) {
       if (
         (event.metaKey || event.ctrlKey) &&
@@ -68,7 +77,11 @@ export default function GlobalSearch() {
       }
     }
     window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
+    window.addEventListener("navpilot:global-search", show);
+    return () => {
+      window.removeEventListener("keydown", key);
+      window.removeEventListener("navpilot:global-search", show);
+    };
   }, [open]);
   useEffect(() => {
     if (!open || !query.trim()) {

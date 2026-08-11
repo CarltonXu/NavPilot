@@ -4,7 +4,7 @@ process.env.NAVPILOT_DB_PATH = ":memory:";
 const db = require("../src/db");
 const axios = require('axios');
 const { Readable } = require('node:stream');
-const { extractJson, normalizeEnvelope, parseCommands, parsePlan, requestCommandsWithConfig, requestDiscussionWithConfig, requestDiscussionStreamWithConfig } = require("../src/services/ai/openAiCompatibleProvider");
+const { extractJson, normalizeEnvelope, parseCommands, parsePlan, parseInstruction, requestCommandsWithConfig, requestInstructionWithConfig, requestDiscussionWithConfig, requestDiscussionStreamWithConfig } = require("../src/services/ai/openAiCompatibleProvider");
 
 test("AI provider extracts embedded arrays and normalizes compatible envelopes", () => {
   assert.deepEqual(extractJson("<think>ignore</think> result: ```json\n[{\"op\":\"item.delete\",\"item\":\"Old\"}]\n```"), [{ op:"item.delete", item:"Old" }]);
@@ -32,6 +32,28 @@ test("AI provider preserves advisory summary and suggestions with an executable 
   assert.deepEqual(result.suggestions, ["内部系统区分研发与办公", "外部资源按用途维护"]);
   assert.equal(result.commands.length, 3);
   assert.equal(result.commands[2].parentCategory, "公司资源 / 内部系统");
+});
+
+test("AI instruction parser separates deterministic queries from collection plans", () => {
+  const query = parseInstruction({ choices:[{ message:{ content:JSON.stringify({
+    kind:"query",
+    title:"失联资源",
+    query:{ filters:{ status:["offline"] }, groupBy:"category", view:"both", limit:50 },
+  }) } }] });
+  assert.equal(query.kind, "query");
+  assert.deepEqual(query.query.filters, { status:["offline"] });
+  const plan = parseInstruction({ choices:[{ message:{ content:JSON.stringify({
+    kind:"plan",
+    summary:"开启全部链接探测",
+    suggestions:[],
+    operations:[{ op:"item.bulkUpdate", selector:{ all:true }, fields:{ checkEnabled:true, checkMethod:"http" } }],
+  }) } }] });
+  assert.equal(plan.kind, "plan");
+  assert.deepEqual(plan.commands[0].selector, { all:true });
+  const report = parseInstruction({ choices:[{ message:{ content:JSON.stringify({
+    kind:"report", title:"All spaces", report:{ spaces:"all_visible" },
+  }) } }] });
+  assert.deepEqual(report, { kind:"report", title:"All spaces", report:{ spaces:"all_visible" } });
 });
 
 test('AI provider retries a timeout once with compressed context and uses the model timeout', async (t) => {
@@ -68,9 +90,25 @@ test('AI discussion returns advisory text without requiring an executable comman
   assert.match(result.answer,/建议下一步/);
   assert.equal(result.model,'advisor');
 });
+test('AI instruction usage includes schema-repair model calls',async(t)=>{
+  let calls=0;
+  t.mock.method(axios,'post',async()=>{
+    calls+=1;
+    if(calls===1)return{data:{choices:[{message:{content:'invalid response'}}],usage:{prompt_tokens:10,completion_tokens:4,total_tokens:14}}};
+    return{data:{choices:[{message:{content:JSON.stringify({kind:'query',title:'资源统计',query:{filters:{all:true},groupBy:'none',view:'summary',limit:100}})}}],usage:{prompt_tokens:6,completion_tokens:4,total_tokens:10}}};
+  });
+  const result=await requestInstructionWithConfig('统计所有资源',{context:{resourceCount:2,resources:[],categories:[]}},{baseURL:'https://ai.example/v1',apiKey:'secret',model:'repair-model',requestTimeoutMs:60000});
+  assert.equal(result.kind,'query');assert.equal(result.modelCalls,2);
+  assert.deepEqual(result.usage,{prompt_tokens:16,completion_tokens:8,total_tokens:24});
+});
+test('AI non-stream requests preserve cancellation semantics',async(t)=>{
+  t.mock.method(axios,'post',async(_url,_body,options)=>{assert.ok(options.signal);throw Object.assign(new Error('cancelled'),{code:'ERR_CANCELED'});});
+  const controller=new AbortController();controller.abort();
+  await assert.rejects(()=>requestDiscussionWithConfig('讨论分类',{signal:controller.signal},{baseURL:'https://ai.example/v1',apiKey:'secret',model:'cancel-model',requestTimeoutMs:60000}),error=>error.code==='AI_REQUEST_CANCELLED'&&error.status===499);
+});
 test('AI discussion streams compatible SSE deltas as they arrive',async(t)=>{
   t.mock.method(axios,'post',async(_url,body,options)=>{
-    assert.equal(body.stream,true);assert.equal(options.responseType,'stream');
+    assert.equal(body.stream,true);assert.equal(body.stream_options.include_usage,true);assert.equal(options.responseType,'stream');
     return{data:Readable.from([
       'data: {"choices":[{"delta":{"content":"建议先"}}]}\n\n',
       'data: {"choices":[{"delta":{"content":"统一分类。"}}]}\n\n',
@@ -85,5 +123,8 @@ test('AI discussion streams compatible SSE deltas as they arrive',async(t)=>{
   assert.deepEqual(deltas,['建议先','统一分类。']);
   assert.equal(result.answer,'建议先统一分类。');
   assert.equal(result.model,'stream-model');
+  const usage=db.prepare("SELECT input_tokens,output_tokens,first_token_ms FROM ai_usage_events WHERE provider_model='stream-model' ORDER BY created_at_ms DESC LIMIT 1").get();
+  assert.deepEqual({inputTokens:usage.input_tokens,outputTokens:usage.output_tokens},{inputTokens:8,outputTokens:4});
+  assert.ok(Number.isInteger(usage.first_token_ms)&&usage.first_token_ms>=0);
 });
 test.after(()=>db.close());

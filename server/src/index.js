@@ -17,10 +17,12 @@ const { optionalSession } = require('./middleware/auth');
 const { bootstrapAdmin } = require('./services/authService');
 const { cleanupSessions } = require('./services/sessionService');
 const { startCron } = require('./cron');
+const { configureAppProxy,initializeGeoIp,getGeoStatus } = require('./services/proxyGeoService');
 
 function createApp() {
   const app = express();
   app.disable('x-powered-by');
+  configureAppProxy(app);
   app.use(express.json({ limit: '5mb' }));
   app.use('/api', optionalSession);
   app.use('/api/auth', authRouter);
@@ -33,7 +35,7 @@ function createApp() {
   app.use('/api/settings', settingsRouter);
   app.use('/api/shares', sharesRouter);
   app.use('/api/transfer', transferRouter);
-  app.get('/api/health', (req, res) => res.json({ ok: true }));
+  app.get('/api/health', (req, res) => res.json({ ok: true, geoIp:getGeoStatus() }));
   const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');
   if (fs.existsSync(clientDist)) {
     app.use(express.static(clientDist));
@@ -51,6 +53,7 @@ async function start() {
   const bootstrapped = await bootstrapAdmin();
   if (bootstrapped) console.log(`[auth] 已创建首个管理员: ${bootstrapped.username}，首次登录必须修改密码`);
   cleanupSessions();
+  await initializeGeoIp();
   const app = createApp();
   const port = process.env.PORT || 8787;
   return app.listen(port, () => { console.log(`NavPilot 服务已启动: http://localhost:${port}`); startCron(); });

@@ -15,8 +15,11 @@ export default function NavCard({
   onToggleSelect,
   onDragStart,
   onDragEnd,
+  canFavorite = false,
+  favoriteBusy = false,
+  onToggleFavorite,
 }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   let host = item.url;
   try {
     host = new URL(item.url).host;
@@ -45,9 +48,10 @@ export default function NavCard({
         onDragEnd,
       }
     : {};
-  const actions = canManage && (
-    <div className="item-actions">
-      <button
+  const actions = (canFavorite || canManage) && (
+    <div className={`item-actions ${item.is_favorite ? "favorite-active" : ""}`}>
+      {canFavorite&&<button className={`mini-btn favorite-btn ${item.is_favorite?"active":""}`} disabled={favoriteBusy} aria-pressed={Boolean(item.is_favorite)} aria-label={locale==="en"?(item.is_favorite?"Remove favorite":"Add favorite"):(item.is_favorite?"取消收藏":"添加收藏")} title={locale==="en"?(item.is_favorite?"Remove favorite":"Add favorite"):(item.is_favorite?"取消收藏":"添加收藏")} onClick={(event)=>{event.preventDefault();event.stopPropagation();onToggleFavorite?.();}}><Icon name="star" size={15}/></button>}
+      {canManage&&<><button
         className="mini-btn"
         aria-label={t("nav.checkNow")}
         title={t("nav.checkNow")}
@@ -78,12 +82,13 @@ export default function NavCard({
       >
         ×
       </button>
+      </>}
     </div>
   );
   if (viewMode === "overview")
     return (
       <div
-        className={`overview-resource-card selectable-item ${selected ? "selected" : ""}`}
+        className={`overview-resource-card selectable-item ${canFavorite ? "favorite-control" : ""} ${canManage ? "manageable" : ""} ${selected ? "selected" : ""}`}
         {...dragProps}
       >
         {selection}
@@ -143,11 +148,13 @@ export default function NavCard({
           <span className="nav-list-category">
             {item.category_name || t("category.uncategorized")}
           </span>
-          <StatusPill
-            status={item.status}
-            latencyMs={item.latency_ms}
-            checking={checking}
-          />
+          <span className="nav-list-status">
+            <StatusPill
+              status={item.status}
+              latencyMs={item.latency_ms}
+              checking={checking}
+            />
+          </span>
           <span className="click-count">{item.click_count || 0}</span>
         </a>
         {actions}

@@ -2,6 +2,7 @@ import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
 import { useI18n } from "../i18n/LocaleContext.jsx";
 import Icon, { ContentIcon } from "./Icon.jsx";
+import AdminPageHeader from "./AdminPageHeader.jsx";
 
 function localizedDimension(t, group, value) {
   const key = `analytics.dimensions.${group}.${String(value || "other").replace(/[^a-zA-Z0-9_-]/g, "_")}`;
@@ -9,30 +10,45 @@ function localizedDimension(t, group, value) {
   return translated === key ? value || t("analytics.unknown") : translated;
 }
 
+function detailAtPointer(detail, event) {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const pointerX = Number(event.clientX) > 0 ? event.clientX : rect.left + rect.width / 2;
+  const pointerY = Number(event.clientY) > 0 ? event.clientY : rect.top;
+  return { ...detail, pointerX, pointerY, below: pointerY < 150 };
+}
+
+function ChartTooltip({ active }) {
+  if (!active) return null;
+  return <span className={`chart-hover-tooltip ${active.below ? "below" : ""}`} style={{ "--tooltip-x": `${active.pointerX}px`, "--tooltip-y": `${active.pointerY}px` }} role="tooltip"><strong>{active.label}</strong>{active.metrics.map(([label, value]) => <span key={label}><span>{label}</span><b>{value}</b></span>)}</span>;
+}
+
 function Bars({ data, group }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const [active, setActive] = useState(null);
   const max = Math.max(...data.map((item) => item.value), 1);
+  const total = data.reduce((sum, item) => sum + Number(item.value || 0), 0);
   if (!data.length)
     return <div className="chart-empty">{t("analytics.noData")}</div>;
   return (
-    <div className="chart-bars">
-      {data.map((item) => {
+    <div className="interactive-chart"><div className="chart-bars" onMouseLeave={() => setActive(null)}>
+      {data.map((item, index) => {
         const label = localizedDimension(t, group, item.name);
+        const selected = { label, metrics:[[locale === "en" ? "Count" : "数量", Number(item.value).toLocaleString(locale)],[locale === "en" ? "Share" : "占比", `${total ? ((item.value / total) * 100).toFixed(1) : 0}%`]] };
         return (
-          <div className="chart-bar-row" key={`${item.name}-${item.value}`}>
-            <span title={label}>{label}</span>
+          <div className={`chart-bar-row ${active?.key === item.name ? "active" : ""}`} key={`${item.name}-${item.value}`} role="img" aria-label={`${label} · ${item.value}`} tabIndex="0" onPointerEnter={(event) => setActive(detailAtPointer({key:item.name,...selected}, event))} onPointerMove={(event) => setActive(detailAtPointer({key:item.name,...selected}, event))} onFocus={(event) => setActive(detailAtPointer({key:item.name,...selected}, event))} onBlur={() => setActive(null)}>
+            <span>{label}</span>
             <div className="chart-bar-track">
               <i style={{ width: `${(item.value / max) * 100}%` }} />
             </div>
-            <strong>{item.value}</strong>
+            <strong>{Number(item.value).toLocaleString(locale)}</strong>
           </div>
         );
       })}
-    </div>
+    </div><ChartTooltip active={active}/></div>
   );
 }
 
-function TopResources({ data }) {
+function TopResources({ data, onSelect }) {
   const { locale } = useI18n();
   const text =
     locale === "en"
@@ -51,11 +67,16 @@ function TopResources({ data }) {
   const max = Math.max(...data.map((item) => item.value), 1);
   return (
     <div className="top-resource-list">
-      {data.map((item, index) => (
+      {data.slice(0, 12).map((item, index) => (
         <div
           className="top-resource-row"
           key={`${item.id}-${index}`}
           tabIndex="0"
+          role="button"
+          onClick={() => onSelect?.(item)}
+          onKeyDown={(event) =>
+            (event.key === "Enter" || event.key === " ") && onSelect?.(item)
+          }
         >
           <span className="top-resource-rank">
             {String(index + 1).padStart(2, "0")}
@@ -104,6 +125,7 @@ function TopResources({ data }) {
 
 function ActivityHeatmap({ data }) {
   const { locale } = useI18n();
+  const [active, setActive] = useState(null);
   const days =
     locale === "en"
       ? ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -112,15 +134,12 @@ function ActivityHeatmap({ data }) {
     data.map((row) => [`${row.weekday}:${row.hour}`, row.value]),
   );
   const max = Math.max(...data.map((row) => row.value), 1);
+  const total = data.reduce((sum, row) => sum + Number(row.value || 0), 0);
   return (
-    <div className="activity-heatmap">
+    <div className="interactive-chart"><div className="activity-heatmap" onMouseLeave={() => setActive(null)}>
       <div className="heatmap-hours">
         <span />
-        <span>00</span>
-        <span>06</span>
-        <span>12</span>
-        <span>18</span>
-        <span>23</span>
+        <div><span>00</span><span>06</span><span>12</span><span>18</span><span>23</span></div>
       </div>
       {days.map((day, weekday) => (
         <div className="heatmap-row" key={day}>
@@ -128,10 +147,17 @@ function ActivityHeatmap({ data }) {
           <div>
             {Array.from({ length: 24 }, (_, hour) => {
               const value = map.get(`${weekday}:${hour}`) || 0;
+              const detail = {key:`${weekday}:${hour}`,label:`${day} ${String(hour).padStart(2,"0")}:00–${String((hour+1)%24).padStart(2,"0")}:00`,metrics:[[locale==="en"?"Visits":"访问次数",value.toLocaleString(locale)],[locale==="en"?"Share":"区间占比",`${total?((value/total)*100).toFixed(1):0}%`]]};
               return (
-                <i
+                <button
                   key={hour}
-                  title={`${day} ${String(hour).padStart(2, "0")}:00 · ${value}`}
+                  type="button"
+                  aria-label={`${day} ${String(hour).padStart(2, "0")}:00 · ${value}`}
+                  className={active?.key === `${weekday}:${hour}` ? "active" : ""}
+                  onPointerEnter={(event) => setActive(detailAtPointer(detail, event))}
+                  onPointerMove={(event) => setActive(detailAtPointer(detail, event))}
+                  onFocus={(event) => setActive(detailAtPointer(detail, event))}
+                  onBlur={() => setActive(null)}
                   style={{
                     opacity: value ? 0.18 + (value / max) * 0.82 : 0.06,
                   }}
@@ -141,7 +167,7 @@ function ActivityHeatmap({ data }) {
           </div>
         </div>
       ))}
-    </div>
+    </div><ChartTooltip active={active}/></div>
   );
 }
 
@@ -159,14 +185,15 @@ const regionPoints = {
   BR: [31, 70],
   RU: [65, 25],
 };
-function RegionMap({ data, networks }) {
+function RegionMap({ data, networks, coverage }) {
   const { locale } = useI18n();
-  const known = data.filter(
-    (item) => item.name !== "unknown" && regionPoints[item.name],
-  );
-  const max = Math.max(...known.map((item) => item.value), 1);
+  const [active, setActive] = useState(null);
+  const countries = data.filter((item) => item.name !== "unknown");
+  const mapped = countries.filter((item) => regionPoints[item.name]);
+  const max = Math.max(...mapped.map((item) => item.value), 1);
+  const select = (item) => ({key:item.name,label:item.name,metrics:[[locale==="en"?"Visits":"访问次数",Number(item.value).toLocaleString(locale)],[locale==="en"?"Known-region share":"已识别地区占比",`${coverage?.known?((item.value/coverage.known)*100).toFixed(1):0}%`]]});
   return (
-    <div className="region-map-wrap">
+    <div className="interactive-chart"><div className="region-map-wrap" onMouseLeave={() => setActive(null)}>
       <div
         className="region-map"
         aria-label={locale === "en" ? "Visitor source map" : "访问来源地图"}
@@ -174,44 +201,50 @@ function RegionMap({ data, networks }) {
         <div className="map-land land-a" />
         <div className="map-land land-b" />
         <div className="map-land land-c" />
-        {known.map((item) => (
-          <span
+        {mapped.map((item) => (
+          <button
+            type="button"
             key={item.name}
+            className={active?.key===item.name?"active":""}
+            onPointerEnter={(event) => setActive(detailAtPointer(select(item), event))}
+            onPointerMove={(event) => setActive(detailAtPointer(select(item), event))}
+            onFocus={(event) => setActive(detailAtPointer(select(item), event))}
+            onBlur={() => setActive(null)}
             style={{
               left: `${regionPoints[item.name][0]}%`,
               top: `${regionPoints[item.name][1]}%`,
               "--point-size": `${9 + (item.value / max) * 14}px`,
             }}
-            title={`${item.name} · ${item.value}`}
+            aria-label={`${item.name} · ${item.value}`}
           >
             <i />
             {item.name}
-          </span>
+          </button>
         ))}
       </div>
       <div className="region-legend">
-        {known.length ? (
-          known.slice(0, 6).map((item) => (
-            <span key={item.name}>
+        {countries.length ? (
+          countries.slice(0, 6).map((item) => (
+            <button type="button" key={item.name} className={active?.key===item.name?"active":""} onPointerEnter={(event) => setActive(detailAtPointer(select(item), event))} onPointerMove={(event) => setActive(detailAtPointer(select(item), event))} onFocus={(event) => setActive(detailAtPointer(select(item), event))} onBlur={() => setActive(null)}>
               <i />
               {item.name}
               <b>{item.value}</b>
-            </span>
+            </button>
           ))
         ) : (
           <p>
             {locale === "en"
-              ? "No country data yet. Configure a reverse-proxy country header to enable map markers."
-              : "暂无国家/地区数据。反向代理传入国家代码后，地图会自动显示来源标记。"}
+              ? "No country data yet. Configure a trusted proxy country header or a GeoIP database."
+              : "暂无国家/地区数据。配置可信代理国家头或 GeoIP 数据库后，地图会自动显示来源标记。"}
           </p>
         )}
         <small>
           {locale === "en"
-            ? `${networks.length} network sources (privacy-reduced)`
-            : `${networks.length} 个来源网段（已隐私化）`}
+            ? `${networks.length} network sources · ${coverage?.rate||0}% region coverage`
+            : `${networks.length} 个来源网段（已隐私化） · 地区覆盖率 ${coverage?.rate||0}%`}
         </small>
       </div>
-    </div>
+    </div><ChartTooltip active={active}/></div>
   );
 }
 
@@ -350,18 +383,9 @@ function TrendChart({ data }) {
             {t("analytics.activeUsers")} <b>{active.activeUsers}</b>
           </strong>
           <strong>
-            <i className="growth" />
-            {locale === "en" ? "New users" : "新增用户"}{" "}
-            <b>{active.newUsers}</b>
-          </strong>
-          <strong>
             <i className="resources" />
-            {locale === "en" ? "New resources" : "新增资源"}{" "}
-            <b>{active.newResources}</b>
-          </strong>
-          <strong>
-            <i className="ai" />
-            {locale === "en" ? "AI usage" : "AI 使用"} <b>{active.aiUses}</b>
+            {locale === "en" ? "Opened resources" : "被访问资源"}{" "}
+            <b>{active.openedResources}</b>
           </strong>
         </div>
       )}
@@ -373,194 +397,177 @@ function TrendChart({ data }) {
   );
 }
 
-const chartDefinitions = [
-  ["sources", "sources", "sources", "grid"],
-  ["devices", "devices", "devices", "user"],
-  ["spaces", "spaces", "spaces", "building"],
-  ["分类资源", "categories", "resources", "folder"],
-  ["浏览器", "browsers", "resources", "globe"],
-  ["操作系统", "systems", "resources", "tools"],
-  ["资源状态", "statuses", "resources", "shield"],
-];
+const pieColors = ["var(--accent)", "#22a06b", "#f59e0b", "#8b5cf6", "#0ea5e9", "#ef5b5b", "#64748b"];
+
+function DonutChart({ data, valueKey = "value", emptyLabel }) {
+  const { locale } = useI18n();
+  const [active, setActive] = useState(null);
+  const visible = data.length > 7 ? [...data.slice(0, 6), { name:locale === "en" ? "Other" : "其他", [valueKey]:data.slice(6).reduce((sum,item)=>sum+(Number(item[valueKey])||0),0) }] : data.slice(0, 7);
+  const total = visible.reduce((sum, item) => sum + (Number(item[valueKey]) || 0), 0);
+  let cursor = 0;
+  const segments = visible.map((item, index) => {
+    const start = cursor;
+    cursor += total ? ((Number(item[valueKey]) || 0) / total) * 100 : 0;
+    return {item,index,start,end:cursor,color:pieColors[index]};
+  });
+  const select = (item) => ({key:item.name,label:item.name,metrics:[[locale==="en"?"Count":"数量",Number(item[valueKey]).toLocaleString(locale)],[locale==="en"?"Share":"占比",`${total?((item[valueKey]/total)*100).toFixed(1):0}%`]]});
+  if (!total) return <div className="chart-empty">{emptyLabel}</div>;
+  return (
+    <div className="interactive-chart" onMouseLeave={() => setActive(null)}><div className="donut-layout">
+      <div className="donut-chart">
+        <svg viewBox="0 0 140 140" role="img" aria-label={locale==="en"?"Distribution chart":"分布图表"}>
+          <circle className="donut-track" cx="70" cy="70" r="49" pathLength="100"/>
+          {segments.map((segment) => <circle key={`${segment.item.name}-${segment.index}`} className={`donut-segment ${active?.key===segment.item.name?"active":""}`} cx="70" cy="70" r="49" pathLength="100" strokeDasharray={`${segment.end-segment.start} ${100-(segment.end-segment.start)}`} strokeDashoffset={-segment.start} transform="rotate(-90 70 70)" style={{"--segment-color":segment.color}} tabIndex="0" role="img" aria-label={`${segment.item.name} · ${segment.item[valueKey]}`} onPointerEnter={(event)=>setActive(detailAtPointer(select(segment.item),event))} onPointerMove={(event)=>setActive(detailAtPointer(select(segment.item),event))} onFocus={(event)=>setActive(detailAtPointer(select(segment.item),event))} onBlur={()=>setActive(null)}/>) }
+        </svg>
+        <span><strong>{active ? Number(visible.find(item=>item.name===active.key)?.[valueKey]||0).toLocaleString(locale) : total.toLocaleString(locale)}</strong><small>{active?.label || (locale==="en"?"Total":"总计")}</small></span>
+      </div>
+      <div className="donut-legend">
+        {visible.map((item, index) => (
+          <div className={`donut-legend-row ${active?.key===item.name?"active":""}`} key={`${item.name}-${index}`} tabIndex="0" role="img" aria-label={`${item.name} · ${item[valueKey]}`} onPointerEnter={(event)=>setActive(detailAtPointer(select(item),event))} onPointerMove={(event)=>setActive(detailAtPointer(select(item),event))} onFocus={(event)=>setActive(detailAtPointer(select(item),event))} onBlur={()=>setActive(null)}><i style={{ background: pieColors[index] }} /><span title={item.name}>{item.name}</span><b>{item[valueKey]}</b><small>{Math.round((item[valueKey] / total) * 100)}%</small></div>
+        ))}
+      </div>
+    </div><ChartTooltip active={active}/></div>
+  );
+}
+
+function TokenTrend({ data }) {
+  const { locale } = useI18n();
+  const [active, setActive] = useState(null);
+  const max = Math.max(1, ...data.map((row) => row.totalTokens));
+  const select = (row) => ({key:row.day,label:new Intl.DateTimeFormat(locale,{year:"numeric",month:"short",day:"numeric"}).format(new Date(`${row.day}T00:00:00`)),metrics:[[locale==="en"?"Total tokens":"Token 总量",Number(row.totalTokens).toLocaleString(locale)],[locale==="en"?"Input / output":"输入 / 输出",`${Number(row.inputTokens).toLocaleString(locale)} / ${Number(row.outputTokens).toLocaleString(locale)}`],[locale==="en"?"Requests":"请求数",Number(row.requests).toLocaleString(locale)]]});
+  return (
+    <div className="interactive-chart"><div className="token-trend" onMouseLeave={() => setActive(null)}>
+      {data.map((row) => (
+        <button type="button" key={row.day} className={active?.key===row.day?"active":""} style={{ height: `${Math.max(3, (row.totalTokens / max) * 100)}%` }} aria-label={`${row.day} · ${row.totalTokens} Token`} onPointerEnter={(event)=>setActive(detailAtPointer(select(row),event))} onPointerMove={(event)=>setActive(detailAtPointer(select(row),event))} onFocus={(event)=>setActive(detailAtPointer(select(row),event))} onBlur={()=>setActive(null)}/>
+      ))}
+      {!data.some((row) => row.totalTokens) && <span>所选范围内暂无 Token 数据</span>}
+    </div><ChartTooltip active={active}/></div>
+  );
+}
+
+function AnalyticsCard({ icon, title, description, children, className = "", action = null }) {
+  return (
+    <figure className={`chart-card ${className}`}>
+      <figcaption><div className="chart-title-icon"><Icon name={icon} size={17} /></div><div><strong>{title}</strong>{description && <small>{description}</small>}</div>{action}</figcaption>
+      {children}
+    </figure>
+  );
+}
+
+function AnalyticsDrawer({ detail, onClose, locale }) {
+  useEffect(() => {
+    const close = (event) => event.key === "Escape" && onClose();
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [onClose]);
+  const isResource = detail.type === "resource";
+  const value = detail.value;
+  const rows = isResource
+    ? [["URL", value.url || "—"], [locale === "en" ? "Description" : "描述", value.description || "—"], [locale === "en" ? "Space" : "空间", value.scope === "personal" ? (value.ownerName || "个人空间") : "公共空间"], [locale === "en" ? "Category" : "分类", value.categoryName || "未分类"], [locale === "en" ? "Unique visitors" : "独立访问用户", value.uniqueVisitors], [locale === "en" ? "Last opened" : "最近访问", value.lastOpenedAt ? new Date(value.lastOpenedAt).toLocaleString() : "—"]]
+    : [[locale === "en" ? "Username" : "用户名", value.username || "—"], [locale === "en" ? "Requests" : "请求次数", value.requests], ["Token", value.totalTokens], [locale === "en" ? "Success rate" : "成功率", `${value.successRate || 0}%`], [locale === "en" ? "Average latency" : "平均响应耗时", `${value.averageLatencyMs || 0} ms`], ["TTFT", value.averageFirstTokenMs == null ? (locale === "en" ? "No streaming samples" : "暂无流式样本") : `${value.averageFirstTokenMs} ms`]];
+  return (
+    <div className="analytics-drawer-mask" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <aside className="analytics-drawer" role="dialog" aria-modal="true">
+        <header><div className="chart-title-icon"><Icon name={isResource ? "link" : "assistant"} size={19} /></div><div><h2>{value.name}</h2><p>{isResource ? (locale === "en" ? "Resource access drill-down" : "资源访问下钻") : (locale === "en" ? "AI usage drill-down" : "AI 使用下钻")}</p></div><button className="mini-btn" onClick={onClose}>×</button></header>
+        {isResource && Boolean(value.deleted) && <div className="analytics-detail-warning">该资源已删除，以下内容来自访问事件快照。</div>}
+        <dl>{rows.map(([label, content]) => <React.Fragment key={label}><dt>{label}</dt><dd>{content ?? "—"}</dd></React.Fragment>)}</dl>
+        <section><h3>{locale === "en" ? "Why this matters" : "指标用途"}</h3><p>{isResource ? (locale === "en" ? "Use visits and unique visitors together to distinguish repeated use from broad adoption." : "结合访问次数和独立用户数，区分高频重复使用与广泛使用。") : (locale === "en" ? "Use requests, tokens and latency together to evaluate cost, adoption and experience." : "结合请求、Token 与延迟评估使用活跃度、成本和体验。")}</p></section>
+      </aside>
+    </div>
+  );
+}
 
 export default function AdminAnalytics() {
   const { t, errorMessage, locale } = useI18n();
   const [days, setDays] = useState(30);
+  const [scope, setScope] = useState("all");
+  const [ownerId, setOwnerId] = useState("");
+  const [owners, setOwners] = useState([]);
   const [data, setData] = useState(null);
+  const [detail, setDetail] = useState(null);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  useEffect(() => { api.getAnalyticsUsers().then((result) => setOwners(result.items || [])).catch(() => {}); }, []);
   useEffect(() => {
     let live = true;
-    setError("");
-    api
-      .getAnalytics(days)
+    setLoading(true); setError("");
+    api.getAnalytics({ days, scope, ownerId: scope === "personal" ? ownerId : "" })
       .then((result) => live && setData(result))
-      .catch((err) => live && setError(errorMessage(err)));
-    return () => {
-      live = false;
-    };
-  }, [days, errorMessage]);
-  if (!data && !error)
-    return <div className="admin-panel">{t("common.loading")}</div>;
-  if (error) return <div className="admin-panel error-text">{error}</div>;
-  const local =
-    locale === "en"
-      ? {
-          onlineUsers: "Online now",
-          newUsers: "New users",
-          newResources: "New resources",
-          aiUses: "AI usage",
-          top: "Popular resources",
-          topDesc: "Hover a resource for its snapshot",
-          heatmap: "Activity heatmap",
-          heatmapDesc: "Visits by weekday and hour",
-          regions: "Visitor sources",
-          regionsDesc: "Geographic markers and privacy-reduced networks",
-          ownership: "User resource profile",
-          ownershipDesc: "Public and personal resource distribution",
-        }
-      : {
-          onlineUsers: "当前在线",
-          newUsers: "新增用户",
-          newResources: "新增资源",
-          aiUses: "AI 使用次数",
-          top: "热门资源",
-          topDesc: "悬停资源可查看历史快照详情",
-          heatmap: "访问热点分析",
-          heatmapDesc: "按星期和时段展示访问密度",
-          regions: "访问来源地图",
-          regionsDesc: "地区标记与隐私化来源网段",
-          ownership: "用户资源画像",
-          ownershipDesc: "公共与个人资源分布情况",
-        };
-  const kpis = [
-    ["opens", "grid", t("analytics.opens")],
-    ["activeUsers", "user", t("analytics.activeUsers")],
-    ["onlineUsers", "shield", local.onlineUsers],
-    ["users", "user", t("analytics.users")],
-    ["resources", "link", t("analytics.resources")],
-    ["newUsers", "plus", local.newUsers],
-    ["newResources", "folder", local.newResources],
-    ["aiUses", "assistant", local.aiUses],
-  ];
+      .catch((err) => live && setError(errorMessage(err)))
+      .finally(() => live && setLoading(false));
+    return () => { live = false; };
+  }, [days, scope, ownerId, errorMessage]);
+  const zh = locale !== "en";
+  const copy = zh ? {
+    description:"按空间、资源和用户理解真实使用行为，并监控 AI 成本与体验",
+    all:"全平台",public:"公共空间",personal:"个人空间",allOwners:"全部个人用户",
+    overview:"使用概览",overviewDesc:"回答所选空间是否被使用，以及使用覆盖面如何",
+    access:"访问表现",accessDesc:"观察访问变化，识别异常波动与持续活跃度",
+    resource:"资源表现",resourceDesc:"判断哪些资源真正有价值，以及资源结构是否健康",
+    behavior:"用户与使用习惯",behaviorDesc:"了解谁在使用、从哪里进入、何时最活跃",
+    ai:"AI 使用与性能",aiDesc:"同时评估采用率、Token 成本、可靠性和响应体验",
+  } : {
+    description:"Understand real usage by space, resource and user, while monitoring AI cost and experience",
+    all:"All platform",public:"Public Space",personal:"Personal Spaces",allOwners:"All personal owners",
+    overview:"Usage overview",overviewDesc:"Is the selected space being used, and how broad is adoption?",
+    access:"Access performance",accessDesc:"Track changes and identify unusual or sustained activity",
+    resource:"Resource performance",resourceDesc:"Find useful resources and evaluate information health",
+    behavior:"Users and habits",behaviorDesc:"Understand who uses resources, entry points and active time",
+    ai:"AI usage and performance",aiDesc:"Evaluate adoption, token cost, reliability and response experience",
+  };
+  if (!data && loading) return <div className="admin-panel">{t("common.loading")}</div>;
+  if (!data && error) return <div className="admin-panel error-text">{error}</div>;
+  const summary = data.summary;
+  const aiSummary = data.ai?.summary || {};
+  const number = (value) => Number(value || 0).toLocaleString(locale);
+  const filterActions = <div className="analytics-filter-controls">
+    <label><span>{t("analytics.range")}</span><select value={days} onChange={(event) => setDays(Number(event.target.value))}>{[7,30,90].map((value) => <option value={value} key={value}>{t("analytics.days",{count:value})}</option>)}</select></label>
+    <div className="analytics-scope-switch" role="group">{[["all",copy.all],["public",copy.public],["personal",copy.personal]].map(([value,label]) => <button className={scope===value?"active":""} key={value} onClick={() => {setScope(value);if(value!=="personal")setOwnerId("");}}>{label}</button>)}</div>
+    {scope === "personal" && <label><span>{zh?"空间所有者":"Space owner"}</span><select value={ownerId} onChange={(event) => setOwnerId(event.target.value)}><option value="">{copy.allOwners}</option>{owners.map((owner) => <option key={owner.id} value={owner.id}>{owner.displayName} (@{owner.username}) · {owner.resourceCount}</option>)}</select></label>}
+  </div>;
+  const accessKpis = [["opens","grid",zh?"资源访问":"Resource opens",zh?"实际打开资源的总次数":"Actual resource opens"],["activeUsers","user",zh?"访问用户":"Visitors",zh?"产生访问的独立登录用户":"Distinct signed-in visitors"],["openedResources","link",zh?"被访问资源":"Opened resources",zh?"至少被访问一次的资源":"Resources opened at least once"],["resources","folder",zh?"现有资源":"Current resources",zh?"当前筛选空间的资源总数":"Resources in selected spaces"],["averageOpensPerUser","grid",zh?"人均访问":"Opens per visitor",zh?"衡量使用深度，不代表用户规模":"Usage depth, not audience size"],["newResources","plus",zh?"新增资源":"New resources",zh?"统计周期内当前仍存在的新增资源":"Current resources created in range"]];
+  const aiKpis = [["requests",zh?"AI 请求":"AI requests"],["users",zh?"使用用户":"AI users"],["totalTokens","Token"],["successRate",zh?"成功率":"Success rate","%"],["averageLatencyMs",zh?"平均响应耗时":"Avg latency"," ms"],["averageFirstTokenMs","TTFT"," ms"],["peakRpm","Peak RPM"],["peakTpm","Peak TPM"]];
   return (
-    <div className="analytics-dashboard">
-      <div className="analytics-filters">
-        <div>
-          <h2>{t("analytics.title")}</h2>
-          <p>{t("analytics.description")}</p>
+    <div className={`analytics-dashboard ${loading ? "is-refreshing" : ""}`}>
+      <AdminPageHeader icon="grid" title={t("analytics.title")} description={copy.description} actions={filterActions} />
+      {error && <div className="admin-inline-error"><Icon name="shield" size={15}/>{error}</div>}
+      <section className="analytics-section"><header><div><h3>{copy.overview}</h3><p>{copy.overviewDesc}</p></div>{loading && <span className="analytics-refreshing">{zh?"正在静默更新…":"Refreshing…"}</span>}</header>
+        <div className="kpi-grid analytics-kpi-grid">{accessKpis.map(([key,icon,label,note]) => <article key={key} title={note}><span className="kpi-icon"><Icon name={icon} size={17}/></span><div><span>{label}</span><strong>{number(summary[key])}</strong><small>{note}</small></div></article>)}</div>
+      </section>
+      <section className="analytics-section"><header><div><h3>{copy.access}</h3><p>{copy.accessDesc}</p></div></header>
+        <AnalyticsCard icon="grid" title={t("analytics.trend")} description={zh?"访问次数、独立用户和被访问资源按日变化":"Daily opens, visitors and opened resources"} className="analytics-trend-card"><TrendChart data={data.access.trend}/></AnalyticsCard>
+      </section>
+      <section className="analytics-section"><header><div><h3>{copy.resource}</h3><p>{copy.resourceDesc}</p></div></header>
+        <div className="analytics-two-column align-start">
+          <AnalyticsCard icon="link" title={zh?"热门资源":"Popular resources"} description={zh?"点击一行查看资源快照和访问明细":"Select a row for resource details"} className="top-resources-card"><TopResources data={data.access.topResources} onSelect={(value) => setDetail({type:"resource",value})}/></AnalyticsCard>
+          <div className="analytics-stack">
+            <AnalyticsCard icon="folder" title={zh?"分类资源占比":"Resources by category"} description={zh?"用于发现分类是否过度集中或大量未分类":"Find concentration and uncategorized resources"}><DonutChart data={data.resources.categories} emptyLabel={t("analytics.noData")}/></AnalyticsCard>
+            <AnalyticsCard icon="shield" title={zh?"资源可用状态":"Resource availability"} description={zh?"在线、离线与待探测资源构成":"Online, offline and unknown composition"}><DonutChart data={data.resources.statuses} emptyLabel={t("analytics.noData")}/></AnalyticsCard>
+          </div>
         </div>
-        <label>
-          <span>{t("analytics.range")}</span>
-          <select
-            value={days}
-            onChange={(event) => setDays(Number(event.target.value))}
-          >
-            {[7, 30, 90].map((value) => (
-              <option value={value} key={value}>
-                {t("analytics.days", { count: value })}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <div className="kpi-grid analytics-kpi-grid">
-        {kpis.map(([key, icon, label]) => (
-          <article key={key}>
-            <span className="kpi-icon">
-              <Icon name={icon} size={17} />
-            </span>
-            <div>
-              <span>{label}</span>
-              <strong>{data.summary[key]}</strong>
-            </div>
-          </article>
-        ))}
-      </div>
-      <div className="analytics-grid analytics-grid-expanded">
-        <figure className="chart-card analytics-trend-card">
-          <figcaption>
-            <div className="chart-title-icon">
-              <Icon name="grid" size={17} />
-            </div>
-            <div>
-              <strong>{t("analytics.trend")}</strong>
-              <small>{t("analytics.trendDesc")}</small>
-            </div>
-            <span className="chart-tag">{t("analytics.liveEvents")}</span>
-          </figcaption>
-          <TrendChart data={data.trend} />
-        </figure>
-        <figure className="chart-card top-resources-card">
-          <figcaption>
-            <div className="chart-title-icon">
-              <Icon name="link" size={17} />
-            </div>
-            <div>
-              <strong>{local.top}</strong>
-              <small>{local.topDesc}</small>
-            </div>
-          </figcaption>
-          <TopResources data={data.topResources} />
-        </figure>
-        <figure className="chart-card heatmap-card">
-          <figcaption>
-            <div className="chart-title-icon">
-              <Icon name="grid" size={17} />
-            </div>
-            <div>
-              <strong>{local.heatmap}</strong>
-              <small>{local.heatmapDesc}</small>
-            </div>
-          </figcaption>
-          <ActivityHeatmap data={data.heatmap} />
-        </figure>
-        <figure className="chart-card region-card">
-          <figcaption>
-            <div className="chart-title-icon">
-              <Icon name="globe" size={17} />
-            </div>
-            <div>
-              <strong>{local.regions}</strong>
-              <small>{local.regionsDesc}</small>
-            </div>
-          </figcaption>
-          <RegionMap data={data.regions} networks={data.networks} />
-        </figure>
-        <figure className="chart-card ownership-card">
-          <figcaption>
-            <div className="chart-title-icon">
-              <Icon name="user" size={17} />
-            </div>
-            <div>
-              <strong>{local.ownership}</strong>
-              <small>{local.ownershipDesc}</small>
-            </div>
-          </figcaption>
-          <OwnershipCard value={data.ownership} />
-        </figure>
-        {chartDefinitions.map(([title, key, group, icon]) => (
-          <figure className="chart-card dimension-card" key={key}>
-            <figcaption>
-              <div className="chart-title-icon">
-                <Icon name={icon} size={17} />
-              </div>
-              <strong>
-                {["sources", "devices", "spaces"].includes(title)
-                  ? t(`analytics.${title}`)
-                  : locale === "en"
-                    ? {
-                        分类资源: "Resources by folder",
-                        浏览器: "Browsers",
-                        操作系统: "Operating systems",
-                        资源状态: "Resource status",
-                      }[title] || title
-                    : title}
-              </strong>
-            </figcaption>
-            <Bars data={data[key]} group={group} />
-          </figure>
-        ))}
-      </div>
+      </section>
+      <section className="analytics-section"><header><div><h3>{copy.behavior}</h3><p>{copy.behaviorDesc}</p></div></header>
+        <div className="analytics-behavior-grid">
+          <AnalyticsCard icon="grid" title={zh?"访问时间热点":"Activity heatmap"} description={zh?"星期 × 小时，用于判断高峰时段":"Weekday × hour for peak periods"} className="heatmap-card behavior-heatmap-card"><ActivityHeatmap data={data.access.heatmap}/></AnalyticsCard>
+          <AnalyticsCard icon="user" title={zh?"访问用户排行":"Visitor ranking"} description={zh?"用于识别活跃用户，不等同于资源所有者":"Active visitors, distinct from space owners"}><Bars data={(data.access.visitors||[]).map((row)=>({name:row.name,value:row.value}))} group="users"/></AnalyticsCard>
+          <AnalyticsCard icon="grid" title={t("analytics.sources")} description={zh?"资源从卡片、搜索或 AI 等入口被打开":"Where resource opens originate"}><Bars data={data.access.sources} group="sources"/></AnalyticsCard>
+          <AnalyticsCard icon="user" title={t("analytics.devices")} description={zh?"用于判断桌面端与移动端适配优先级":"Prioritize desktop or mobile experience"}><Bars data={data.access.devices} group="devices"/></AnalyticsCard>
+          <AnalyticsCard icon="globe" title={zh?"浏览器环境":"Browser environment"} description={zh?"用于识别兼容性验证和前端优化优先级":"Prioritize compatibility testing and frontend optimization"}><Bars data={data.access.browsers} group="browsers"/></AnalyticsCard>
+        </div>
+        <AnalyticsCard icon="globe" title={zh?"访问来源地区":"Visitor regions"} description={zh?"地区数据来自可信代理国家代码或本地 GeoIP 数据库，并展示当前覆盖率":"Country data comes from trusted proxy headers or the local GeoIP database, with coverage shown explicitly"} className="region-card behavior-region-card"><RegionMap data={data.access.regions} networks={data.access.networks} coverage={data.access.regionCoverage}/></AnalyticsCard>
+      </section>
+      <section className="analytics-section ai-analytics-section"><header><div><h3>{copy.ai}</h3><p>{copy.aiDesc}</p></div><span className="chart-tag">{zh?"TTFT 仅统计流式请求":"TTFT: streaming only"}</span></header>
+        <div className="ai-kpi-grid">{aiKpis.map(([key,label,suffix=""]) => <article key={key}><span>{label}</span><strong>{aiSummary[key] == null ? "—" : `${number(aiSummary[key])}${suffix}`}</strong>{key==="peakRpm"&&<small>{zh?"活跃分钟峰值":"Peak active minute"}</small>}{key==="peakTpm"&&<small>{zh?"活跃分钟峰值":"Peak active minute"}</small>}</article>)}</div>
+        <div className="analytics-two-column align-start">
+          <AnalyticsCard icon="assistant" title={zh?"Token 增长趋势":"Token trend"} description={zh?"输入与输出 Token 的总量按日变化，用于成本趋势判断":"Daily token volume for cost trend"}><TokenTrend data={data.ai.trend}/><div className="token-summary"><span>{zh?"输入":"Input"} <b>{number(aiSummary.inputTokens)}</b></span><span>{zh?"输出":"Output"} <b>{number(aiSummary.outputTokens)}</b></span><span>{zh?"平均活跃分钟 TPM":"Avg active-minute TPM"} <b>{number(aiSummary.averageTpm)}</b></span></div></AnalyticsCard>
+          <AnalyticsCard icon="user" title={zh?"用户 AI 用量":"AI usage by user"} description={zh?"点击用户下钻，联合判断采用率、成本和响应体验":"Select a user to inspect adoption, cost and experience"}><div className="analytics-entity-table"><div className="entity-table-head"><span>{zh?"用户":"User"}</span><span>{zh?"请求":"Requests"}</span><span>Token</span><span>{zh?"成功率":"Success"}</span></div>{data.ai.users.map((row)=><button key={row.id||row.name} onClick={()=>setDetail({type:"ai-user",value:row})}><span><strong>{row.name}</strong><small>{row.username?`@${row.username}`:"—"}</small></span><b>{row.requests}</b><b>{number(row.totalTokens)}</b><b>{row.successRate}%</b></button>)}{!data.ai.users.length&&<div className="chart-empty">{t("analytics.noData")}</div>}</div></AnalyticsCard>
+        </div>
+        <div className="analytics-two-column align-start">
+          <AnalyticsCard icon="assistant" title={zh?"模型调用分布":"Model usage"} description={zh?"对比模型调用量与 Token 消耗，辅助模型治理":"Compare calls and tokens for model governance"}><DonutChart data={data.ai.models.map((row)=>({...row,value:row.requests}))} emptyLabel={t("analytics.noData")}/></AnalyticsCard>
+          <AnalyticsCard icon="tools" title={zh?"AI 功能使用分布":"AI feature usage"} description={zh?"识别真正被使用的 AI 能力，避免维护低价值功能":"Identify useful capabilities and low-value features"}><Bars data={data.ai.features.map((row)=>({name:row.name,value:row.requests}))} group="features"/></AnalyticsCard>
+        </div>
+      </section>
+      {detail && <AnalyticsDrawer detail={detail} onClose={()=>setDetail(null)} locale={locale}/>}
     </div>
   );
 }
@@ -786,15 +793,12 @@ export function AuditTable() {
   }
   return (
     <div className="admin-panel audit-panel">
-      <div className="audit-heading">
-        <div>
-          <h2>{t("analytics.audit")}</h2>
-          <p>{t("audit.description")}</p>
-        </div>
-        <span className="chart-tag">
-          {t("audit.records", { count: pagination.total })}
-        </span>
-      </div>
+      <AdminPageHeader
+        icon="shield"
+        title={t("analytics.audit")}
+        description={t("audit.description")}
+        actions={<span className="chart-tag">{t("audit.records", { count: pagination.total })}</span>}
+      />
       {error && <div className="error-text">{error}</div>}
       <div className={`audit-table ${loading ? "loading" : ""}`}>
         <table>

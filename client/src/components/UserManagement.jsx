@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { api } from "../api.js";
 import { useI18n } from "../i18n/LocaleContext.jsx";
 import Icon from "./Icon.jsx";
+import AdminPageHeader from "./AdminPageHeader.jsx";
 
 function initials(user) {
   return String(user?.displayName || user?.username || "?")
@@ -343,26 +344,12 @@ export default function UserManagement() {
   ];
   return (
     <div className="user-management">
-      <div className="account-page-heading">
-        <div className="settings-page-icon">
-          <Icon name="user" size={22} />
-        </div>
-        <div>
-          <h2>{t("admin.users")}</h2>
-          <p>{t("admin.accountsDescription")}</p>
-        </div>
-        <button
-          className="icon-btn primary"
-          onClick={() => {
-            setError("");
-            setCreatePassword("");
-            setShowCreate(true);
-          }}
-        >
-          <Icon name="plus" size={15} />
-          {t("admin.createUser")}
-        </button>
-      </div>
+      <AdminPageHeader
+        icon="user"
+        title={t("admin.users")}
+        description={t("admin.accountsDescription")}
+        actions={<button className="icon-btn primary" onClick={() => { setError(""); setCreatePassword(""); setShowCreate(true); }}><Icon name="plus" size={15} />{t("admin.createUser")}</button>}
+      />
       {error && !showCreate && !selected && (
         <div className="admin-inline-error">
           <Icon name="shield" size={16} />

@@ -9,6 +9,7 @@ const {
 } = require("../src/services/navigationService");
 const { validateEnvelope } = require("../src/services/ai/commandSchema");
 const { canonicalize, createPlan } = require("../src/services/ai/planService");
+const { executeResourceQuery } = require("../src/services/ai/instructionService");
 const { executePlan, undoPlan } = require("../src/services/ai/commandExecutor");
 const axios = require("axios");
 const { checkItem, checkAndPersist } = require("../src/services/healthCheck");
@@ -78,11 +79,24 @@ test("latest schema includes versions and AI execution tables", () => {
   assert.ok(
     db.prepare("SELECT 1 FROM schema_migrations WHERE version=6").get(),
   );
+  assert.ok(
+    db.prepare("SELECT 1 FROM schema_migrations WHERE version=11").get(),
+  );
+  assert.ok(
+    db.prepare("SELECT 1 FROM schema_migrations WHERE version=12").get(),
+  );
+  assert.ok(
+    db.prepare("SELECT 1 FROM schema_migrations WHERE version=13").get(),
+  );
+  assert.ok(
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='user_favorites'").get(),
+  );
   assert.ok(itemColumns.includes("tags_json"));
   assert.ok(
     [
       "ip_prefix",
       "country_code",
+      "country_source",
       "item_name",
       "item_url",
       "item_description",
@@ -307,6 +321,82 @@ test("AI planner refuses ambiguous item references", () => {
   );
 });
 
+test("AI collection selectors update every resource in the current realm without ambiguity", () => {
+  const owner = user("selector-user"),
+    foreignOwner = user("selector-foreign"),
+    service = createNavigationService(db),
+    current = realm("personal", owner);
+  const first = service.createItem(current, {
+    name: "Selector one",
+    url: "https://selector-one.example",
+    check_enabled: false,
+  }).value;
+  const second = service.createItem(current, {
+    name: "Selector two",
+    url: "https://selector-two.example",
+    check_enabled: false,
+  }).value;
+  service.createItem(realm("personal", foreignOwner), {
+    name: "Foreign selector item",
+    url: "https://selector-foreign.example",
+    check_enabled: false,
+  });
+  const envelope = validateEnvelope({
+    operations: [
+      {
+        op: "item.bulkUpdate",
+        items: ["所有链接"],
+        fields: { checkEnabled: true, checkMethod: "http" },
+      },
+    ],
+  });
+  assert.deepEqual(envelope.operations[0].selector, { all: true });
+  const plan = canonicalize(envelope.operations, current);
+  assert.deepEqual(new Set(plan.operations[0].ids), new Set([first.id, second.id]));
+  assert.equal(plan.operations[0].display.matched, 2);
+});
+
+test("AI resource queries use complete scoped data and return deterministic tables", () => {
+  const owner = user("instruction-query-user"),
+    foreignOwner = user("instruction-query-foreign"),
+    service = createNavigationService(db),
+    current = realm("personal", owner),
+    category = service.createCategory(current, { name: "Operations" }).value;
+  const offline = service.createItem(current, {
+    name: "Offline dashboard",
+    url: "https://offline-query.example",
+    category_id: category.id,
+    check_enabled: true,
+  }).value;
+  service.createItem(current, {
+    name: "Online dashboard",
+    url: "https://online-query.example",
+    category_id: category.id,
+  });
+  service.createItem(realm("personal", foreignOwner), {
+    name: "Foreign offline dashboard",
+    url: "https://foreign-offline-query.example",
+  });
+  db.prepare("UPDATE items SET status='offline' WHERE id=?").run(offline.id);
+  const result = executeResourceQuery(
+    db,
+    current,
+    {
+      title: "失联资源",
+      filters: { status: ["offline"] },
+      groupBy: "category",
+      view: "both",
+      limit: 20,
+    },
+    "zh-CN",
+  );
+  assert.equal(result.kind, "query");
+  assert.equal(result.summary.matched, 1);
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].name, "Offline dashboard");
+  assert.deepEqual(result.breakdown, [{ name: "Operations", count: 1 }]);
+});
+
 test("AI category deletion previews and confirms the full subtree impact", () => {
   const owner = user("delete-plan-user"),
     service = createNavigationService(db),
@@ -413,5 +503,49 @@ test("AI plans can create nested categories and use them later only after explic
   assert.equal(
     service.listItems(current).some((item) => item.name === "Reference"),
     false,
+  );
+  const reapplied = executePlan({
+    id: plan.id,
+    actor,
+    req,
+    idempotencyKey: "approved-reapplication",
+    confirmed: true,
+  });
+  assert.equal(reapplied.status, "executed");
+  assert.equal(reapplied.reapplied, true);
+  assert.ok(
+    service.listCategories(current).some((category) => category.path_label === "学习 / 文档"),
+  );
+  assert.equal(
+    undoPlan({ id: plan.id, actor, req, idempotencyKey: "second-approved-undo" })
+      .status,
+    "undone",
+  );
+});
+
+test("reapplying an undone AI plan rejects resources changed after the undo", () => {
+  const owner = user("reapply-stale-user"),
+    current = realm("personal", owner),
+    actor = { id: owner, username: "reapply-stale-user", role: "user" },
+    service = createNavigationService(db),
+    item = service.createItem(current, {
+      name: "Reapply target",
+      url: "https://reapply.example",
+    }).value,
+    plan = createPlan({
+      actor,
+      current,
+      locale: "zh-CN",
+      text: "rename target",
+      model: "test-model",
+      commands: [{ op: "item.update", item: "Reapply target", fields: { name: "Renamed target" } }],
+    }),
+    req = { auth: { user: actor }, header: () => "", ip: "127.0.0.1" };
+  executePlan({ id: plan.id, actor, req, idempotencyKey: "stale-first-execute", confirmed: true });
+  undoPlan({ id: plan.id, actor, req, idempotencyKey: "stale-first-undo" });
+  service.updateItem(current, item.id, { description: "changed after undo" });
+  assert.throws(
+    () => executePlan({ id: plan.id, actor, req, idempotencyKey: "stale-reapply-attempt", confirmed: true }),
+    (error) => error.code === "PLAN_STALE",
   );
 });

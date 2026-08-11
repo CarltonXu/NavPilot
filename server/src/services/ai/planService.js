@@ -1,6 +1,8 @@
 const crypto = require("crypto");
 const db = require("../../db");
 const { createNavigationService } = require("../navigationService");
+const { assertRealmPermission } = require("../authorizationService");
+const { selectItems, selectorDisplay } = require("./resourceSelector");
 const navigation = createNavigationService(db);
 function planError(code, message, status = 400) {
   return Object.assign(new Error(message), { code, status });
@@ -137,27 +139,43 @@ function canonicalize(commands, current) {
     }
     if (command.op.startsWith("item.")) {
       const refs = command.items?.length ? command.items : [command.item];
-      const targets = refs.map((ref) => resolveOne(items, ref, "item"));
-      targets.forEach((item) => (expected[`item:${item.id}`] = item.version));
+      const targets = command.selector
+        ? selectItems(items, categories, command.selector)
+        : refs.map((ref) => resolveOne(items, ref, "item"));
+      if (!targets.length)
+        throw planError(
+          "ITEM_NOT_FOUND",
+          "当前空间中没有符合条件的资源",
+          404,
+        );
+      const uniqueTargets = [...new Map(targets.map((item) => [item.id, item])).values()];
+      uniqueTargets.forEach((item) => (expected[`item:${item.id}`] = item.version));
       if (command.op === "item.update" || command.op === "item.bulkUpdate")
         operations.push({
           op: "item.bulkUpdate",
-          ids: targets.map((x) => x.id),
+          ids: uniqueTargets.map((x) => x.id),
           patch: mapFields(command.fields, categories),
-          preview: targets.map(navigation.itemSnapshot),
-          display: { items: refs, ...command.fields },
+          preview: uniqueTargets.map(navigation.itemSnapshot),
+          display: {
+            ...(command.selector
+              ? { selector: selectorDisplay(command.selector), matched: uniqueTargets.length }
+              : { items: refs }),
+            ...command.fields,
+          },
         });
       else if (command.op === "item.move")
         operations.push({
           op: "item.bulkUpdate",
-          ids: targets.map((x) => x.id),
+          ids: uniqueTargets.map((x) => x.id),
           patch: categoryPatch(
             categories,
             command.destinationCategory || command.category,
           ),
-          preview: targets.map(navigation.itemSnapshot),
+          preview: uniqueTargets.map(navigation.itemSnapshot),
           display: {
-            items: refs,
+            ...(command.selector
+              ? { selector: selectorDisplay(command.selector), matched: uniqueTargets.length }
+              : { items: refs }),
             destinationCategory:
               command.destinationCategory || command.category,
           },
@@ -165,10 +183,11 @@ function canonicalize(commands, current) {
         });
       else if (command.op === "item.delete")
         operations.push(
-          ...targets.map((item) => ({
+          ...uniqueTargets.map((item) => ({
             op: "item.delete",
             id: item.id,
             preview: navigation.itemSnapshot(item),
+            destructive: true,
           })),
         );
       continue;
@@ -262,6 +281,7 @@ function hash(value) {
     .digest("hex");
 }
 function createPlan({ actor, current, locale, text, commands, model, summary = "", suggestions = [] }) {
+  assertRealmPermission(actor, current, "manage");
   const canonical = canonicalize(commands, current),
     id = crypto.randomUUID(),
     now = Date.now();

@@ -19,7 +19,8 @@ FROM node:22-bookworm-slim AS runtime
 
 ENV NODE_ENV=production \
     PORT=8787 \
-    NAVPILOT_DB_PATH=/app/server/data/navpilot.db
+    NAVPILOT_DB_PATH=/app/server/data/navpilot.db \
+    NAVPILOT_GEOIP_DB_PATH=/app/geoip/GeoLite2-Country.mmdb
 
 WORKDIR /app/server
 COPY --from=server-dependencies --chown=node:node /build/server/node_modules ./node_modules
@@ -27,7 +28,7 @@ COPY --chown=node:node server/package.json ./package.json
 COPY --chown=node:node server/src ./src
 COPY --from=client-builder --chown=node:node /build/client/dist /app/client/dist
 
-RUN mkdir -p /app/server/data && chown node:node /app/server/data
+RUN mkdir -p /app/server/data /app/geoip && chown node:node /app/server/data /app/geoip
 
 USER node
 EXPOSE 8787

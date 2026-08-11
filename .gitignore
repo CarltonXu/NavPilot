@@ -2,6 +2,13 @@ node_modules/
 dist/
 client/public/downloads/
 coverage/
+server/geoip/*
+!server/geoip/.gitkeep
+!server/geoip/README.md
+*.mmdb
+GeoLite2-*.tar.gz
+GeoLite2-*.zip
+geoip.env
 **/data/*.db
 **/data/*.db-shm
 **/data/*.db-wal

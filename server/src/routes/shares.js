@@ -1,17 +1,19 @@
 const express = require("express");
 const crypto = require("crypto");
 const db = require("../db");
-const { requireUser, requirePasswordChanged } = require("../middleware/auth");
+const { requireUser, requirePasswordChanged, recordAuthorizationDenied } = require("../middleware/auth");
 const { auditWith } = require("../services/eventService");
 const {
   createTransferService,
 } = require("../services/resourceTransferService");
+const { assertRealmPermission } = require("../services/authorizationService");
 
 const router = express.Router();
 const transfer = createTransferService(db);
 router.use(requireUser, requirePasswordChanged);
 
-function send(res, error) {
+function send(req, res, error) {
+  if (error.status === 403) recordAuthorizationDenied(req, "public.manage", { scope:req.body?.scope });
   return res
     .status(error.status || 400)
     .json({ code: error.code || "SHARE_FAILED", error: error.message });
@@ -102,11 +104,10 @@ router.post("/", (req, res) => {
         code: "SHARE_RECIPIENT_REQUIRED",
       });
     const sourceScope = req.body.scope === "public" ? "public" : "personal";
-    if (sourceScope === "public" && req.auth.user.role !== "admin")
-      throw Object.assign(new Error("只有管理员可以共享公共空间资源"), {
-        code:"FORBIDDEN",
-        status:403,
-      });
+    assertRealmPermission(req.auth.user, {
+      scope:sourceScope,
+      ownerId:sourceScope === "personal" ? req.auth.user.id : null,
+    }, "manage");
     const snapshot = transfer.selectionSnapshot(
         { scope:sourceScope, ownerId:sourceScope === "personal" ? req.auth.user.id : null },
         req.body.selection || {},
@@ -163,7 +164,7 @@ router.post("/", (req, res) => {
     })();
     res.status(201).json({ shares: created });
   } catch (error) {
-    return send(res, error);
+    return send(req, res, error);
   }
 });
 
@@ -226,7 +227,7 @@ router.post("/:id/respond", (req, res) => {
       result,
     });
   } catch (error) {
-    return send(res, error);
+    return send(req, res, error);
   }
 });
 

@@ -7,6 +7,8 @@ import ThemeSwitcher from "./ThemeSwitcher.jsx";
 import LocaleSwitcher from "./LocaleSwitcher.jsx";
 import { AccountMenu } from "./AuthDialogs.jsx";
 import AiCommandPanel from "./AiCommandPanel.jsx";
+import AiInstructionPanel from "./AiInstructionPanel.jsx";
+import AiRunUsage from "./AiRunUsage.jsx";
 
 const LAUNCH_KEY = "navpilot_ai_workspace_launch_v1";
 const copy = {
@@ -44,7 +46,15 @@ const copy = {
     ready: "讨论结果已准备好，可以继续追问或转成执行方案。",
     discussionMode: "讨论模式",
     executionMode: "执行方案",
+    commandMode: "指令模式",
+    commandTitle: "直接执行",
+    commandDesc: "自然语言查询、统计或生成待授权操作",
+    newInstruction: "新建指令",
+    instructionHistory: "最近指令",
+    emptyInstructionHistory: "还没有指令记录",
     changed: "方案已执行，返回导航页面即可查看最新资源。",
+    stop: "停止生成",
+    stopped: "生成已停止",
   },
   en: {
     title: "AI Workspace",
@@ -80,7 +90,15 @@ const copy = {
     ready: "The discussion is ready for follow-up or conversion into a plan.",
     discussionMode: "Discussion",
     executionMode: "Execution plan",
+    commandMode: "Command mode",
+    commandTitle: "Direct commands",
+    commandDesc: "Query, report, or create approval-ready actions",
+    newInstruction: "New command",
+    instructionHistory: "Recent commands",
+    emptyInstructionHistory: "No command history yet",
     changed: "The plan was executed. Return to the portal to see the latest resources.",
+    stop: "Stop",
+    stopped: "Generation stopped",
   },
 };
 
@@ -124,6 +142,10 @@ export default function AiWorkspace({
   const [planSeed, setPlanSeed] = useState("");
   const [planVersion, setPlanVersion] = useState(0);
   const [notice, setNotice] = useState("");
+  const [mode, setMode] = useState("discussion");
+  const [instructionRecord, setInstructionRecord] = useState(null);
+  const [activeInstructionId, setActiveInstructionId] = useState(null);
+  const [instructionVersion, setInstructionVersion] = useState(0);
   const messageListRef = useRef(null);
   const streamController = useRef(null);
 
@@ -133,8 +155,8 @@ export default function AiWorkspace({
     (scope === "public" || aiPersonalEnabled);
   const canPlan = canDiscuss && (scope === "personal" || auth.isAdmin);
   const visibleConversations = useMemo(
-    () => conversations.filter((item) => item.scope === scope),
-    [conversations, scope],
+    () => conversations.filter((item) => item.scope === scope && (item.mode || "discussion") === mode),
+    [conversations, scope, mode],
   );
 
   const refreshHistory = useCallback(() => {
@@ -164,6 +186,9 @@ export default function AiWorkspace({
     setPlanVersion(0);
     setError("");
     setNotice("");
+    setInstructionRecord(null);
+    setActiveInstructionId(null);
+    setInstructionVersion((value) => value + 1);
   }
 
   async function openConversation(item) {
@@ -190,6 +215,43 @@ export default function AiWorkspace({
     }
   }
 
+  async function openInstruction(item) {
+    setBusy(true);
+    setError("");
+    try {
+      const value = await api.getAiConversation(item.id);
+      const rows = value.messages || [];
+      const prompt = [...rows].reverse().find((message) => message.role === "user")?.content || "";
+      const answer = [...rows].reverse().find((message) => message.role === "assistant" && message.metadata?.mode === "instruction");
+      let result = answer?.metadata?.kind === "query" ? answer.metadata.result : null;
+      if (answer?.metadata?.kind === "plan" && answer.planId)
+        result = { kind:"plan", plan:await api.getAiPlan(answer.planId) };
+      if (answer?.metadata?.kind === "report" && answer.metadata.reportId)
+        result = await api.getAiReport(answer.metadata.reportId);
+      if (answer?.metadata?.kind === "error")
+        result = { kind:"error", error:answer.content, code:answer.metadata.code };
+      if (result && answer?.metadata?.usage) result = { ...result, run:answer.metadata.usage };
+      else if (result && answer?.metadata?.runId) {
+        try { result = { ...result, run:await api.getAiRun(answer.metadata.runId) }; } catch { /* legacy history has no run snapshot */ }
+      }
+      setScope(value.scope);
+      setInstructionRecord({ id:value.id, prompt, result, updatedAt:value.updatedAt || item.updatedAt });
+      setActiveInstructionId(value.id);
+    } catch (value) {
+      setError(errorMessage(value));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function newInstruction() {
+    setInstructionRecord(null);
+    setActiveInstructionId(null);
+    setInstructionVersion((value) => value + 1);
+    setError("");
+    setNotice("");
+  }
+
   async function sendDiscussion() {
     const text = draft.trim();
     if (!text || !canDiscuss) return;
@@ -199,28 +261,29 @@ export default function AiWorkspace({
     const createdAt=Date.now(),streamId=`stream-${createdAt}-${Math.random().toString(36).slice(2)}`;
     const controller=new AbortController();streamController.current=controller;
     const reducedMotion=window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-    let typingQueue='',typingFrame=0,upstreamDone=false,resolveTyping=null;
+    let pendingContent='',renderFrame=0;
     const appendContent=content=>setMessages(current=>current.map(message=>message.localId===streamId?{...message,content:message.content+content}:message));
-    const pumpTyping=()=>{
-      if(controller.signal.aborted){typingFrame=0;resolveTyping?.();return;}
-      if(typingQueue){const size=Math.min(28,4+Math.floor(typingQueue.length/500)),part=typingQueue.slice(0,size);typingQueue=typingQueue.slice(size);appendContent(part);typingFrame=requestAnimationFrame(pumpTyping);return;}
-      typingFrame=0;if(upstreamDone)resolveTyping?.();
+    const flushPending=()=>{
+      renderFrame=0;
+      if(controller.signal.aborted||!pendingContent)return;
+      const content=pendingContent;pendingContent='';appendContent(content);
     };
-    const enqueueContent=content=>{if(!content)return;if(reducedMotion){appendContent(content);return;}typingQueue+=content;if(!typingFrame)typingFrame=requestAnimationFrame(pumpTyping);};
-    const finishTyping=()=>new Promise(resolve=>{upstreamDone=true;resolveTyping=resolve;if(reducedMotion||!typingQueue){resolve();return;}if(!typingFrame)typingFrame=requestAnimationFrame(pumpTyping);});
+    const enqueueContent=content=>{if(!content)return;if(reducedMotion){appendContent(content);return;}pendingContent+=content;if(!renderFrame)renderFrame=requestAnimationFrame(flushPending);};
+    const finishStreamRender=()=>{if(renderFrame){cancelAnimationFrame(renderFrame);renderFrame=0;}flushPending();};
     setMessages((current) => [...current,
       { role: "user", content: text, createdAt },
       { role: "assistant", content: "", createdAt:createdAt+1, streaming:true, localId:streamId },
     ]);
     setDraft("");
     try {
-      await api.discussAiStream(scope,text,locale,conversationId,{
+      const completed=await api.discussAiStream(scope,text,locale,conversationId,{
         signal:controller.signal,
         onMeta:value=>setConversationId(value.conversationId),
         onDelta:enqueueContent,
+        onUsage:event=>setMessages(current=>current.map(message=>message.localId===streamId?{...message,run:event.run}:message)),
       });
-      await finishTyping();
-      setMessages(current=>current.map(message=>message.localId===streamId?{...message,streaming:false,metadata:{mode:"discussion",streamed:true}}:message));
+      finishStreamRender();
+      setMessages(current=>current.map(message=>message.localId===streamId?{...message,streaming:false,run:completed.run||message.run,metadata:{mode:"discussion",streamed:true,usage:completed.run||message.run}}:message));
       setPlanSeed(
         locale === "en"
           ? "Turn the confirmed conclusions from our discussion into a safe executable plan. Do not delete resources unless explicitly requested."
@@ -230,8 +293,13 @@ export default function AiWorkspace({
       setNotice(c.ready);
       refreshHistory();
     } catch (value) {
-      if(typingFrame)cancelAnimationFrame(typingFrame);
-      if(value?.name==='AbortError')return;
+      if(renderFrame)cancelAnimationFrame(renderFrame);
+      if(value?.name==='AbortError'){
+        setMessages(current=>current.map(message=>message.localId===streamId?{...message,streaming:false,cancelled:true}:message));
+        setNotice(c.stopped);
+        refreshHistory();
+        return;
+      }
       setMessages(current=>current.map(message=>message.localId===streamId?{...message,streaming:false,failed:true}:message));
       setError(errorMessage(value));
     } finally {
@@ -242,6 +310,15 @@ export default function AiWorkspace({
   function createPlan() {
     if (!canPlan || !planSeed) return;
     setPlanVersion((value) => value + 1);
+    setNotice("");
+  }
+
+  function switchMode(nextMode) {
+    streamController.current?.abort();
+    streamController.current = null;
+    setBusy(false);
+    setMode(nextMode);
+    setError("");
     setNotice("");
   }
 
@@ -302,31 +379,41 @@ export default function AiWorkspace({
             <Icon name="building" size={14} />{c.public}
           </button>
         </div>
-        <span className={`ai-mode-chip ${planVersion > 0 ? "execution" : "discussion"}`}>
-          <Icon name={planVersion > 0 ? "tools" : "assistant"} size={13} />
-          {planVersion > 0 ? c.executionMode : c.discussionMode}
-        </span>
+        <div className="ai-workspace-mode-switch" role="tablist" aria-label={locale === "en" ? "AI mode" : "AI 模式"}>
+          <button role="tab" aria-selected={mode === "discussion"} className={mode === "discussion" ? "active" : ""} disabled={busy} onClick={() => switchMode("discussion")}><Icon name="assistant" size={13}/>{c.discussionMode}</button>
+          <button role="tab" aria-selected={mode === "instruction"} className={mode === "instruction" ? "active" : ""} disabled={busy} onClick={() => switchMode("instruction")}><Icon name="tools" size={13}/>{c.commandMode}</button>
+        </div>
       </div>
       <div className="ai-workspace-layout">
         <aside className="ai-workspace-sidebar">
-          <div className="ai-sidebar-label"><Icon name="assistant" size={15} />{c.chat}</div>
-          <button className="icon-btn ai-new-chat" disabled={busy} onClick={() => resetConversation()}>
-            <Icon name="plus" size={14} />{c.newChat}
-          </button>
-          <div className="ai-conversation-list">
-            <strong>{c.history}</strong>
-            {!visibleConversations.length ? (
-              <small>{c.emptyHistory}</small>
-            ) : visibleConversations.map((item) => (
-              <button disabled={busy} className={conversationId === item.id ? "active" : ""} key={item.id} onClick={() => openConversation(item)}>
-                <span>{item.title}</span>
-                <small>{new Date(item.updatedAt).toLocaleString(locale)}</small>
-              </button>
-            ))}
-          </div>
+          {mode === "discussion" ? <>
+            <div className="ai-sidebar-label"><Icon name="assistant" size={15} />{c.chat}</div>
+            <button className="icon-btn ai-new-chat" disabled={busy} onClick={() => resetConversation()}>
+              <Icon name="plus" size={14} />{c.newChat}
+            </button>
+            <div className="ai-conversation-list">
+              <strong>{c.history}</strong>
+              {!visibleConversations.length ? (
+                <small>{c.emptyHistory}</small>
+              ) : visibleConversations.map((item) => (
+                <button disabled={busy} className={conversationId === item.id ? "active" : ""} key={item.id} onClick={() => openConversation(item)}>
+                  <span>{item.title}</span>
+                  <small>{new Date(item.updatedAt).toLocaleString(locale)}</small>
+                </button>
+              ))}
+            </div>
+          </> : <>
+            <div className="ai-sidebar-label"><Icon name="tools" size={15}/>{c.commandTitle}</div>
+            <button className="icon-btn ai-new-chat" disabled={busy} onClick={newInstruction}><Icon name="plus" size={14}/>{c.newInstruction}</button>
+            <div className="ai-conversation-list">
+              <strong>{c.instructionHistory}</strong>
+              {!visibleConversations.length ? <small>{c.emptyInstructionHistory}</small> : visibleConversations.map((item) => <button disabled={busy} className={activeInstructionId === item.id ? "active" : ""} key={item.id} onClick={() => openInstruction(item)}><span>{item.title}</span><small>{new Date(item.updatedAt).toLocaleString(locale)}</small></button>)}
+            </div>
+            <div className="ai-instruction-sidebar-note"><Icon name="shield" size={13}/><span>{locale === "en" ? "Queries run immediately; mutations require approval." : "查询立即执行，修改仍需授权。"}</span></div>
+          </>}
         </aside>
         <main className="ai-workspace-main">
-          <div className="ai-chat-grid">
+          {mode === "instruction" ? <AiInstructionPanel key={`${scope}-${instructionVersion}-${instructionRecord?.id || "new"}`} scope={scope} canMutate={scope === "personal" || auth.isAdmin} initialRecord={instructionRecord} onCreated={(id) => { setActiveInstructionId(id); refreshHistory(); }} onExecuted={() => { setNotice(c.changed); refreshHistory(); }}/> : <div className="ai-chat-grid">
             <section className="ai-discussion-column">
               <header>
                 <div><span className="ai-step-number">1</span><div><strong>{c.chat}</strong><small>{c.welcomeDesc}</small></div></div>
@@ -350,15 +437,18 @@ export default function AiWorkspace({
                       <article className={`${message.role} ${message.streaming ? "streaming" : ""} ${message.failed ? "failed" : ""}`} key={`${message.createdAt || index}-${index}`}>
                         <span>{message.role === "user" ? (locale === "en" ? "You" : "你") : "AI"}</span>
                         <div>{message.content}{message.streaming&&<i className="ai-stream-caret" aria-label={locale==='en'?'Generating':'正在生成'}/>}</div>
+                        {message.cancelled&&<small>{c.stopped}</small>}
                         {message.planId && <small>{locale === "en" ? "Execution plan" : "执行方案"} · {message.planId.slice(0, 8)}</small>}
+                        {(message.run||message.metadata?.usage)&&<AiRunUsage run={message.run||message.metadata.usage} locale={locale} live={message.streaming} compact/>}
                       </article>
                     ))}
                   </div>
                   <footer>
                     <textarea value={draft} disabled={busy} placeholder={c.placeholder} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") sendDiscussion(); }} />
-                    {error && <div className="error-text">{error}</div>}
-                    {notice && <div className="settings-saved">{notice}</div>}
-                    <div><small>Ctrl/⌘ + Enter</small><button className="icon-btn primary" disabled={busy || !draft.trim() || !canDiscuss} onClick={sendDiscussion}><Icon name="assistant" size={14} />{busy ? c.discussing : c.discuss}</button></div>
+                    <div className="ai-composer-feedback" aria-live="polite">
+                      {error ? <span className="error-text">{error}</span> : notice ? <span className="settings-saved">{notice}</span> : null}
+                    </div>
+                    <div className="ai-discussion-actions"><small>Ctrl/⌘ + Enter</small>{busy?<button className="icon-btn ai-discussion-submit" onClick={()=>streamController.current?.abort()}><Icon name="close" size={14}/>{c.stop}</button>:<button className="icon-btn primary ai-discussion-submit" disabled={!draft.trim() || !canDiscuss} onClick={sendDiscussion}><Icon name="assistant" size={14} />{c.discuss}</button>}</div>
                   </footer>
                 </>
               )}
@@ -373,7 +463,7 @@ export default function AiWorkspace({
                 <AiCommandPanel key={`${scope}-${planVersion}`} scope={scope} initialText={planSeed} initialConversationId={conversationId} workspace onExecuted={() => { setNotice(c.changed); refreshHistory(); }} />
               )}
             </aside>
-          </div>
+          </div>}
         </main>
       </div>
     </div>

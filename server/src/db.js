@@ -91,6 +91,13 @@ function createLatestSchema(db) {
       CHECK((scope='public' AND owner_id IS NULL) OR (scope='personal' AND owner_id IS NOT NULL))
     );
     CREATE INDEX IF NOT EXISTS items_realm_order_idx ON items(scope, owner_id, category_id, sort_order, id);
+    CREATE TABLE IF NOT EXISTS user_favorites (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+      created_at_ms INTEGER NOT NULL,
+      PRIMARY KEY(user_id,item_id)
+    );
+    CREATE INDEX IF NOT EXISTS user_favorites_user_time_idx ON user_favorites(user_id,created_at_ms DESC);
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
     CREATE TABLE IF NOT EXISTS legacy_spaces (
       id TEXT PRIMARY KEY,
@@ -142,10 +149,12 @@ function createLatestSchema(db) {
       device_class TEXT,
       ip_prefix TEXT,
       country_code TEXT,
+      country_source TEXT,
       item_name TEXT,
       item_url TEXT,
       item_description TEXT,
       item_icon TEXT,
+      item_owner_id TEXT,
       properties_json TEXT NOT NULL DEFAULT '{}'
     );
     CREATE TABLE IF NOT EXISTS command_executions (
@@ -261,13 +270,50 @@ function createLatestSchema(db) {
     CREATE TABLE IF NOT EXISTS ai_usage_events (
       id TEXT PRIMARY KEY,
       actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      run_id TEXT REFERENCES ai_runs(id) ON DELETE SET NULL,
       feature TEXT NOT NULL,
       provider_model TEXT,
       success INTEGER NOT NULL,
       latency_ms INTEGER NOT NULL,
       input_tokens INTEGER,
       output_tokens INTEGER,
+      first_token_ms INTEGER,
+      realm_scope TEXT,
+      realm_owner_id TEXT,
       error_code TEXT,
+      created_at_ms INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS ai_runs (
+      id TEXT PRIMARY KEY,
+      actor_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      conversation_id TEXT REFERENCES ai_conversations(id) ON DELETE SET NULL,
+      mode TEXT NOT NULL CHECK(mode IN ('discussion','instruction','plan')),
+      realm_scope TEXT NOT NULL CHECK(realm_scope IN ('public','personal')),
+      realm_owner_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL CHECK(status IN ('running','succeeded','failed','cancelled')),
+      stage TEXT NOT NULL DEFAULT 'started',
+      provider_model TEXT,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      estimated_input_tokens INTEGER NOT NULL DEFAULT 0,
+      estimated_output_tokens INTEGER NOT NULL DEFAULT 0,
+      model_calls INTEGER NOT NULL DEFAULT 0,
+      tool_calls INTEGER NOT NULL DEFAULT 0,
+      first_token_ms INTEGER,
+      estimated_cost_micros INTEGER,
+      result_kind TEXT,
+      error_code TEXT,
+      summary_json TEXT NOT NULL DEFAULT '{}',
+      started_at_ms INTEGER NOT NULL,
+      completed_at_ms INTEGER,
+      updated_at_ms INTEGER NOT NULL,
+      CHECK((realm_scope='public' AND realm_owner_id IS NULL) OR (realm_scope='personal' AND realm_owner_id=actor_user_id))
+    );
+    CREATE TABLE IF NOT EXISTS ai_run_events (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES ai_runs(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
       created_at_ms INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS ai_plans_actor_status_idx ON ai_plans(actor_user_id,status,expires_at_ms);
@@ -290,6 +336,9 @@ function createLatestSchema(db) {
     CREATE INDEX IF NOT EXISTS ai_messages_conversation_time_idx ON ai_messages(conversation_id,created_at_ms);
     CREATE INDEX IF NOT EXISTS notifications_user_time_idx ON notifications(user_id,read_at_ms,created_at_ms DESC);
     CREATE INDEX IF NOT EXISTS ai_usage_time_idx ON ai_usage_events(created_at_ms DESC,feature);
+    CREATE INDEX IF NOT EXISTS ai_runs_actor_time_idx ON ai_runs(actor_user_id,started_at_ms DESC);
+    CREATE INDEX IF NOT EXISTS ai_runs_conversation_idx ON ai_runs(conversation_id,started_at_ms DESC);
+    CREATE INDEX IF NOT EXISTS ai_run_events_run_time_idx ON ai_run_events(run_id,created_at_ms,id);
   `);
 }
 
@@ -460,6 +509,51 @@ function migrateCurrentSchema(db) {
       addColumnIfMissing(db, 'items', 'content_analyzed_at_ms INTEGER');
       createLatestSchema(db);
       db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(9)').run();
+    })();
+  }
+  if (!applied.has(10)) {
+    db.transaction(() => {
+      addColumnIfMissing(db, 'analytics_events', 'item_owner_id TEXT');
+      addColumnIfMissing(db, 'ai_usage_events', 'first_token_ms INTEGER');
+      addColumnIfMissing(db, 'ai_usage_events', 'realm_scope TEXT');
+      addColumnIfMissing(db, 'ai_usage_events', 'realm_owner_id TEXT');
+      db.exec(`
+        UPDATE analytics_events
+        SET item_owner_id=(SELECT owner_id FROM items WHERE items.id=analytics_events.item_id)
+        WHERE item_id IS NOT NULL AND item_owner_id IS NULL;
+        CREATE INDEX IF NOT EXISTS analytics_owner_time_idx ON analytics_events(item_owner_id,event_name,occurred_at_ms);
+        CREATE INDEX IF NOT EXISTS ai_usage_realm_time_idx ON ai_usage_events(realm_scope,realm_owner_id,created_at_ms DESC);
+      `);
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(10)').run();
+    })();
+  }
+  if (!applied.has(11)) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS user_favorites (
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+          created_at_ms INTEGER NOT NULL,
+          PRIMARY KEY(user_id,item_id)
+        );
+        CREATE INDEX IF NOT EXISTS user_favorites_user_time_idx ON user_favorites(user_id,created_at_ms DESC);
+      `);
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(11)').run();
+    })();
+  }
+  if (!applied.has(12)) {
+    db.transaction(() => {
+      createLatestSchema(db);
+      addColumnIfMissing(db, 'ai_usage_events', 'run_id TEXT REFERENCES ai_runs(id) ON DELETE SET NULL');
+      db.exec('CREATE INDEX IF NOT EXISTS ai_usage_run_idx ON ai_usage_events(run_id,created_at_ms)');
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(12)').run();
+    })();
+  }
+  if (!applied.has(13)) {
+    db.transaction(() => {
+      addColumnIfMissing(db, 'analytics_events', 'country_source TEXT');
+      db.prepare("UPDATE analytics_events SET country_source='legacy' WHERE country_code IS NOT NULL AND country_code!='' AND country_source IS NULL").run();
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(13)').run();
     })();
   }
 }

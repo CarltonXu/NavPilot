@@ -17,7 +17,15 @@ test('admin account operations protect administrators and audit responses pagina
   createSession(member.id);
 
   const categoryId = Number(db.prepare("INSERT INTO categories(name,scope,owner_id) VALUES(?,'personal',?)").run('Private', member.id).lastInsertRowid);
-  db.prepare("INSERT INTO items(name,url,category_id,scope,owner_id) VALUES(?,?,?,'personal',?)").run('Private link', 'https://private.example', categoryId, member.id);
+  const personalItemId = Number(db.prepare("INSERT INTO items(name,url,category_id,scope,owner_id) VALUES(?,?,?,'personal',?)").run('Private link', 'https://private.example', categoryId, member.id).lastInsertRowid);
+  const publicItemId = db.prepare("SELECT id FROM items WHERE scope='public' ORDER BY id LIMIT 1").get().id;
+  const now = Date.now();
+  db.prepare("INSERT INTO analytics_events(id,occurred_at_ms,event_name,user_id,item_id,category_id,scope,item_name,item_url,item_owner_id,properties_json) VALUES(?,?, 'item.clicked',?,?,?,?,?,?,?,'{}')")
+    .run(crypto.randomUUID(), now, member.id, personalItemId, categoryId, 'personal', 'Private link', 'https://private.example', member.id);
+  db.prepare("INSERT INTO analytics_events(id,occurred_at_ms,event_name,user_id,item_id,scope,country_code,item_name,item_url,properties_json) VALUES(?,?, 'item.clicked',?,?,?,?,?,?,'{}')")
+    .run(crypto.randomUUID(), now, admin.id, publicItemId, 'public', 'CN', 'Public link', 'https://public.example');
+  db.prepare("INSERT INTO ai_usage_events(id,actor_user_id,feature,provider_model,success,latency_ms,input_tokens,output_tokens,first_token_ms,realm_scope,realm_owner_id,created_at_ms) VALUES(?,?,'discussion','test-model',1,320,100,40,85,'personal',?,?)")
+    .run(crypto.randomUUID(), member.id, member.id, now);
   db.prepare("INSERT INTO ai_plans(id,actor_user_id,realm_scope,realm_owner_id,status,locale,input_hash,operations_json,warnings_json,expected_versions_json,created_at_ms,expires_at_ms) VALUES(?,?,'personal',?,'draft','zh-CN','hash','[]','[]','{}',?,?)")
     .run(crypto.randomUUID(), member.id, member.id, Date.now(), Date.now() + 60_000);
   for (let index = 0; index < 25; index += 1) {
@@ -88,6 +96,29 @@ test('admin account operations protect administrators and audit responses pagina
   assert.equal(typeof result.body.summary.onlineUsers, 'number');
   assert.equal(typeof result.body.summary.aiUses, 'number');
   assert.equal(typeof result.body.ownership.averagePersonalResources, 'number');
+  assert.equal(result.body.summary.opens, 2);
+  assert.equal(result.body.ai.summary.totalTokens, 140);
+  assert.equal(result.body.ai.summary.averageFirstTokenMs, 85);
+  assert.equal(result.body.ai.summary.peakRpm, 1);
+  assert.deepEqual(result.body.access.regionCoverage, { total:2, known:1, unknown:1, rate:50, source:'legacy', sources:{proxyHeader:0,geoIpDatabase:0,legacy:1} });
+
+  result = await request(`/api/admin/analytics/summary?days=30&scope=personal&ownerId=${member.id}`);
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.filters.scope, 'personal');
+  assert.equal(result.body.filters.ownerId, member.id);
+  assert.equal(result.body.summary.opens, 1);
+  assert.equal(result.body.summary.resources, 1);
+  assert.equal(result.body.ai.summary.totalTokens, 140);
+
+  result = await request('/api/admin/analytics/summary?days=30&scope=public');
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.summary.opens, 1);
+  assert.equal(result.body.ai.summary.requests, 0);
+  assert.equal(result.body.access.regionCoverage.rate, 100);
+
+  result = await request('/api/admin/analytics/users');
+  assert.equal(result.response.status, 200);
+  assert.ok(result.body.items.some((row) => row.id === member.id && row.resourceCount === 1));
 
   result = await request(`/api/admin/users/${member.id}`, { method: 'PATCH', body: JSON.stringify({ username: 'member-renamed', displayName: 'Renamed Member', status: 'disabled' }) });
   assert.equal(result.response.status, 409);

@@ -171,6 +171,74 @@ Compose 以 `NODE_ENV=production` 启动，因此登录 Cookie 带有 `Secure` �
 
 如需通过局域网 IP 使用 HTTP 临时验收登录功能，可设置 `NAVPILOT_NODE_ENV=development`；该选项只应用于本地验证，正式部署不要启用。
 
+#### 可信代理与 GeoIP
+
+访问来源地区支持两种数据源：可信反向代理传入的国家二字码，以及本地 MaxMind GeoLite2/GeoIP2 Country MMDB。系统只保存国家代码；客户端 IP 仍分别按 IPv4 `/24`、IPv6 `/48` 脱敏。
+
+在 `server/.env` 中配置可信代理。该值必须是明确的 IP、CIDR，或 `proxy-addr` 支持的 `loopback`、`linklocal`、`uniquelocal`，不允许使用 `true`、`all` 或 `*`：
+
+```ini
+# Nginx/Caddy 与 NavPilot 都在同一 Docker/私有网络时
+NAVPILOT_TRUST_PROXY=uniquelocal
+
+# 也可以使用明确网段；多个值用逗号分隔
+# NAVPILOT_TRUST_PROXY=127.0.0.1/32,172.20.0.0/16
+
+NAVPILOT_GEOIP_HEADERS=cf-ipcountry,x-country-code,x-vercel-ip-country
+NAVPILOT_GEOIP_DB_PATH=/app/geoip/GeoLite2-Country.mmdb
+```
+
+GeoLite2 是可选运行数据，不属于 NavPilot 源码和 Docker 镜像。推荐使用仓库提供的安装脚本：
+
+```bash
+./scripts/download-geoip.sh --restart
+```
+
+脚本会安全提示输入 MaxMind Account ID 和 License Key，下载 `GeoLite2-Country` 的 MMDB 版本，校验官方 SHA256，并原子替换 `server/geoip/GeoLite2-Country.mmdb`。License Key 不会回显，也不会写入仓库。自动更新任务可以通过环境变量或 Secret 文件非交互运行：
+
+```bash
+MAXMIND_ACCOUNT_ID=123456 \
+MAXMIND_LICENSE_KEY_FILE=/run/secrets/maxmind_license_key \
+./scripts/download-geoip.sh
+```
+
+也可以从 MaxMind 控制台手动下载并解压 `GeoLite2-Country.mmdb` 到 `server/geoip/`。Compose 会将该目录只读挂载到容器的 `/app/geoip`；数据库不存在或无效时服务不会中断，而是自动降级为可信代理国家头。已加载的 MMDB 更新后会自动热加载；首次安装建议使用脚本的 `--restart`。
+
+开源发布约定：`.mmdb`、GeoLite2 压缩包和下载凭据均被 Git 与 Docker 构建上下文排除。NavPilot 不重新分发 GeoLite2 数据；每个部署者需要自行向 MaxMind 获取数据库并遵守其当前许可和更新条款。`maxmind` Node.js 读取依赖使用 MIT 许可证，但数据文件具有独立许可，不能视为 NavPilot 开源许可证的一部分。
+
+普通 Nginx 至少需要正确传递真实 IP；国家代码可以由 Nginx GeoIP2 模块生成，也可以交给 NavPilot 的本地 MMDB 查询：
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    # 使用 Nginx GeoIP2 时，由代理覆盖该值，不能透传客户端同名请求头
+    proxy_set_header X-Country-Code $geoip2_country_code;
+}
+```
+
+Cloudflare 代理会提供 `CF-IPCountry`，但仍需将 `NAVPILOT_TRUST_PROXY` 配置为 Cloudflare 官方公布的当前出口 CIDR，并通过防火墙禁止用户绕过 Cloudflare 直连应用端口。仅供本机反向代理访问时可绑定回环地址：
+
+```bash
+NAVPILOT_HTTP_BIND=127.0.0.1 docker compose up -d --build
+```
+
+启动后可检查采集器状态：
+
+```bash
+curl -s http://127.0.0.1:8787/api/health
+```
+
+返回的 `geoIp` 中，`trustedProxyConfigured` 表示可信代理已启用，`geoIpDatabaseLoaded` 表示本地 MMDB 已成功加载。配置只影响之后产生的资源点击事件，不会推断或回填历史地区数据。
+
+若通过 cron 定期更新，建议使用只允许 root 读取的 Secret 文件，并避免把 License Key 直接写进 crontab、Shell 历史或 `server/.env`。例如：
+
+```cron
+17 4 * * 3 MAXMIND_ACCOUNT_ID=123456 MAXMIND_LICENSE_KEY_FILE=/run/secrets/maxmind_license_key /opt/navpilot/scripts/download-geoip.sh >>/var/log/navpilot-geoip.log 2>&1
+```
+
 ### 5. 手动生产部署（单进程）
 
 ```bash
