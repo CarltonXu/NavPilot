@@ -41,7 +41,8 @@ router.get('/',async(req,res)=>{
   const threshold=semanticAvailable ? 0.23 : 0.01;
   const searchEventId=`search-${crypto.randomUUID()}`;
   const results=items.map(item=>{const lexical=lexicalScore(item,query),semanticRaw=semantic.get(item.id)||0,semanticScore=Math.max(0,Math.min(1,(semanticRaw-.15)/.75)),score=semanticAvailable?(lexical*.58+semanticScore*.42):lexical;return{...item,score,matchType:semanticScore>lexical?'semantic':'lexical'};}).filter(item=>item.score>=threshold).sort((a,b)=>b.score-a.score||a.scope.localeCompare(b.scope)||a.name.localeCompare(b.name)).slice(0,50).map(({ownerId,score,...item})=>({...item,relevance:Number(score.toFixed(4)),searchEventId}));
-  analytics(req,'search.performed',{surface:'global-search',eventId:searchEventId,properties:{term:analyticsTerm(query),resultCount:results.length,latencyMs:Date.now()-startedAt,semanticAvailable}});
+  const publicResultCount=results.filter(item=>item.scope==='public').length,personalResultCount=results.filter(item=>item.scope==='personal').length;
+  analytics(req,'search.performed',{surface:'global-search',eventId:searchEventId,properties:{term:analyticsTerm(query),resultCount:results.length,publicResultCount,personalResultCount,latencyMs:Date.now()-startedAt,semanticAvailable}});
   res.json(results);
 });
 module.exports=router;

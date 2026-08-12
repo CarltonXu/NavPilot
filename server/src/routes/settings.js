@@ -4,6 +4,7 @@ const {
   getSetting,
   setSetting,
   getBrandingSettings,
+  getPublicInsightsSettings,
   getAdminSettingsView,
   updateSystemSettings,
   addAiModel,
@@ -23,6 +24,7 @@ router.get('/public', (req, res) => {
   res.json({
     ai_personal_enabled: getSetting('ai_personal_enabled', 'false') === 'true',
     branding: getBrandingSettings(),
+    publicInsights: getPublicInsightsSettings(),
   });
 });
 

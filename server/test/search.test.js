@@ -76,6 +76,9 @@ test("global search returns and searches complete category paths", async (t) => 
   assert.equal(results.some((item) => item.id === personalItem.id), false);
   const tracked = db.prepare("SELECT COUNT(*) count FROM analytics_events WHERE event_name='search.performed'").get().count;
   assert.equal(tracked, 3);
+  const searchProperties=db.prepare("SELECT properties_json FROM analytics_events WHERE event_name='search.performed'").all().map(row=>JSON.parse(row.properties_json));
+  assert.equal(searchProperties.some(value=>value.publicResultCount===1&&value.personalResultCount===0),true);
+  assert.equal(searchProperties.some(value=>value.publicResultCount===0&&value.personalResultCount===1),true);
 });
 
 test.after(() => db.close());

@@ -11,6 +11,8 @@ const AI_EMBEDDING_KEY = 'ai_embedding_v1';
 const DEFAULT_AI_REQUEST_TIMEOUT_MS = 90000;
 const BRANDING_DEFAULTS = { siteName: 'NavPilot', logoUrl: '', faviconUrl: '' };
 const BRANDING_KEYS = { siteName: 'site_name', logoUrl: 'site_logo_url', faviconUrl: 'site_favicon_url' };
+const PUBLIC_INSIGHTS_DEFAULTS = { enabled: true, anonymousEnabled: false, searchMinCount: 3 };
+const PUBLIC_INSIGHTS_KEYS = { enabled:'public_insights_enabled', anonymousEnabled:'public_insights_anonymous_enabled', searchMinCount:'public_insights_search_min_count' };
 
 function getSettingRow(key) { return db.prepare('SELECT value FROM settings WHERE key = ?').get(key) || null; }
 function getSetting(key, fallback = null) { return getSettingRow(key)?.value ?? fallback; }
@@ -70,6 +72,15 @@ function getBrandingSettings() {
     siteName: getSetting(BRANDING_KEYS.siteName, BRANDING_DEFAULTS.siteName),
     logoUrl: getSetting(BRANDING_KEYS.logoUrl, BRANDING_DEFAULTS.logoUrl),
     faviconUrl: getSetting(BRANDING_KEYS.faviconUrl, BRANDING_DEFAULTS.faviconUrl),
+  };
+}
+
+function getPublicInsightsSettings() {
+  const count = Number(getSetting(PUBLIC_INSIGHTS_KEYS.searchMinCount, PUBLIC_INSIGHTS_DEFAULTS.searchMinCount));
+  return {
+    enabled:getSetting(PUBLIC_INSIGHTS_KEYS.enabled, String(PUBLIC_INSIGHTS_DEFAULTS.enabled)) === 'true',
+    anonymousEnabled:getSetting(PUBLIC_INSIGHTS_KEYS.anonymousEnabled, String(PUBLIC_INSIGHTS_DEFAULTS.anonymousEnabled)) === 'true',
+    searchMinCount:Number.isInteger(count) && count >= 2 && count <= 20 ? count : PUBLIC_INSIGHTS_DEFAULTS.searchMinCount,
   };
 }
 
@@ -241,7 +252,7 @@ function getAdminSettingsView() {
   const config = getEffectiveAiConfig(), aiModels = getAiModelsView();
   return {
     aiPersonalEnabled:getSetting('ai_personal_enabled','false') === 'true', embedding:embeddingView(),
-    branding:getBrandingSettings(), aiModels:aiModels.models, defaultAiModelId:aiModels.defaultId,
+    branding:getBrandingSettings(), publicInsights:getPublicInsightsSettings(), aiModels:aiModels.models, defaultAiModelId:aiModels.defaultId,
     ai:{ baseURL:{value:config.baseURL,source:config.sources.baseURL}, model:{value:config.model,source:config.sources.model}, apiKey:{configured:Boolean(config.apiKey),source:config.sources.apiKey,maskedSuffix:maskApiKey(config.apiKey)} },
   };
 }
@@ -257,6 +268,20 @@ function validateSettingsUpdate(input = {}) {
     if (Object.prototype.hasOwnProperty.call(input.branding,'siteName')) updates.branding.siteName = validateDisplayName(input.branding.siteName,'网站名称');
     if (Object.prototype.hasOwnProperty.call(input.branding,'logoUrl')) updates.branding.logoUrl = validateAssetURL(input.branding.logoUrl);
     if (Object.prototype.hasOwnProperty.call(input.branding,'faviconUrl')) updates.branding.faviconUrl = validateAssetURL(input.branding.faviconUrl);
+  }
+  if (input.publicInsights !== undefined) {
+    const value=input.publicInsights;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw validationError('INVALID_PUBLIC_INSIGHTS_SETTINGS','公共空间洞察设置格式无效');
+    updates.publicInsights={};
+    for (const field of ['enabled','anonymousEnabled']) if (Object.prototype.hasOwnProperty.call(value,field)) {
+      if (typeof value[field] !== 'boolean') throw validationError('INVALID_PUBLIC_INSIGHTS_SETTINGS',`${field} 必须是布尔值`);
+      updates.publicInsights[field]=value[field];
+    }
+    if (Object.prototype.hasOwnProperty.call(value,'searchMinCount')) {
+      const count=Number(value.searchMinCount);
+      if (!Number.isInteger(count) || count < 2 || count > 20) throw validationError('INVALID_PUBLIC_INSIGHTS_SEARCH_MIN_COUNT','热门搜索词公开阈值必须是 2–20 的整数');
+      updates.publicInsights.searchMinCount=count;
+    }
   }
   const ai = input.ai;
   if (ai !== undefined) {
@@ -277,6 +302,7 @@ function updateSystemSettings(input) {
   db.transaction(() => {
     if (Object.prototype.hasOwnProperty.call(updates,'aiPersonalEnabled')) setSetting('ai_personal_enabled',updates.aiPersonalEnabled?'true':'false');
     if (updates.branding) for (const [field,value] of Object.entries(updates.branding)) setSetting(BRANDING_KEYS[field],value);
+    if (updates.publicInsights) for (const [field,value] of Object.entries(updates.publicInsights)) setSetting(PUBLIC_INSIGHTS_KEYS[field],value);
     for (const field of ['baseURL','model','apiKey']) if (Object.prototype.hasOwnProperty.call(updates,field)) updates[field] === null ? deleteSetting(AI_SETTING_KEYS[field]) : setSetting(AI_SETTING_KEYS[field],field==='apiKey'?sealSecret(updates[field]):updates[field]);
   })();
   return getAdminSettingsView();
@@ -292,4 +318,4 @@ function migrateStoredSecrets() {
 }
 migrateStoredSecrets();
 
-module.exports = { getSetting,setSetting,deleteSetting,getBrandingSettings,getEffectiveAiConfig,getEffectiveAiConfigs,getEmbeddingConfig,updateEmbeddingConfig,testEmbeddingConnection,getAdminSettingsView,updateSystemSettings,validateSettingsUpdate,maskApiKey,addAiModel,updateAiModel,deleteAiModel,setDefaultAiModel,testAiConnection,validateBaseURL,validateModel,validateApiKey,validateRequestTimeout,DEFAULT_AI_REQUEST_TIMEOUT_MS };
+module.exports = { getSetting,setSetting,deleteSetting,getBrandingSettings,getPublicInsightsSettings,getEffectiveAiConfig,getEffectiveAiConfigs,getEmbeddingConfig,updateEmbeddingConfig,testEmbeddingConnection,getAdminSettingsView,updateSystemSettings,validateSettingsUpdate,maskApiKey,addAiModel,updateAiModel,deleteAiModel,setDefaultAiModel,testAiConnection,validateBaseURL,validateModel,validateApiKey,validateRequestTimeout,DEFAULT_AI_REQUEST_TIMEOUT_MS };

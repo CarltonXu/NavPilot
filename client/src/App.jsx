@@ -41,6 +41,7 @@ import RecognitionResultDialog from "./components/RecognitionResultDialog.jsx";
 import ResourceOverview from "./components/ResourceOverview.jsx";
 import { browserPreference } from "./utils/browserPreference.js";
 import AiWorkspace,{launchAiWorkspace}from"./components/AiWorkspace.jsx";
+import PublicInsights from"./components/PublicInsights.jsx";
 
 const validView = (value) => {
   const migrated = ["dense", "board"].includes(value) ? "overview" : value;
@@ -227,6 +228,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     identityKey: null,
     space: null,
   });
+  const initialPortalFilter=useRef(()=>{const params=new URLSearchParams(location.search);return{category:params.get('category'),tag:params.get('tag')}});
   const [snapshot, setSnapshot] = useState({
     key: null,
     status: "idle",
@@ -399,6 +401,13 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     favoriteDefaultKey.current = expectedKey;
     setActiveTag(items.some((item) => item.is_favorite) ? FAVORITES_FILTER : "");
   }, [ready, expectedKey, items]);
+  useEffect(()=>{
+    if(!ready)return;
+    const filter=initialPortalFilter.current();
+    if(filter.category&&categories.some(category=>category.id===Number(filter.category)))setActiveCategory(Number(filter.category));
+    if(filter.tag)setActiveTag(filter.tag);
+    if(filter.category||filter.tag){history.replaceState(null,'','/');initialPortalFilter.current=()=>({category:null,tag:null});}
+  },[ready,categories]);
   useEffect(() => {
     if (
       ready &&
@@ -949,6 +958,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     return { label, text:details.join(" ") };
   })();
   const spaceActions = <>
+    {space==='public'&&publicSettings.publicInsights?.enabled&&(publicSettings.publicInsights.anonymousEnabled||auth.authenticated)&&<button className="icon-btn public-insights-entry" onClick={()=>{location.href='/insights/public'}}><Icon name="insights" size={16}/>{locale==='en'?'Space insights':'空间洞察'}</button>}
     {auth.authenticated&&!auth.user?.mustChangePassword&&<button className="icon-btn ai-assistant-entry" title={locale==='en'?'Open AI Assistant · Ctrl/⌘ J':'打开 AI 助手 · Ctrl/⌘ J'} onClick={()=>setAssistantRequest({id:Date.now(),scope:space,text:'',context:assistantContext})}><Icon name="assistant" size={16}/>{locale==='en'?'AI Assistant':'AI 助手'}</button>}
     {auth.isAdmin&&<button className="icon-btn ai-workspace-entry" onClick={()=>{const category=categories.find(item=>item.id===activeCategory);launchAiWorkspace({scope:space,text:category?(locale==='en'?`Analyze the current category “${category.path_label||category.name}” and suggest improvements before creating any plan.`:`请先分析当前分类「${category.path_label||category.name}」的结构和资源，给出优化建议，暂时不要执行修改。`):''});}}><Icon name="grid" size={16}/>{locale==='en'?'AI Workspace':'AI 工作台'}</button>}
     {canUseSpaceTools&&<button className="icon-btn" disabled={recognizing} onClick={()=>{setPersonalToolsTab("inbox");setShowPersonalTools(true);}}><Icon name="folder" size={16}/>{locale==='en'?'Space tools':'空间工具'}</button>}
@@ -1242,6 +1252,7 @@ export default function App() {
     window.__NAVPILOT_BOOTSTRAP__ || {
       ai_personal_enabled: false,
       branding: { siteName: "NavPilot", logoUrl: "", faviconUrl: "" },
+      publicInsights:{enabled:true,anonymousEnabled:false,searchMinCount:3},
     },
   );
   useEffect(() => {
@@ -1284,7 +1295,7 @@ export default function App() {
     if (icon)
       icon.href = branding.faviconUrl || branding.logoUrl || defaultFavicon;
   }, [publicSettings.branding]);
-  const admin = location.pathname.startsWith("/admin"),aiWorkspace=location.pathname.startsWith('/ai');
+  const admin = location.pathname.startsWith("/admin"),aiWorkspace=location.pathname.startsWith('/ai'),publicInsights=location.pathname.startsWith('/insights/public');
   const branding = publicSettings.branding || {
     siteName: "NavPilot",
     logoUrl: "",
@@ -1301,8 +1312,10 @@ export default function App() {
           onBrandingChange={(next) =>
             setPublicSettings((current) => ({ ...current, branding: next }))
           }
+          publicInsights={publicSettings.publicInsights}
+          onPublicInsightsChange={(next)=>setPublicSettings(current=>({...current,publicInsights:next}))}
         />
-      ) : aiWorkspace ? (canAccessWorkspace?<AiWorkspace theme={theme} onThemeChange={changeTheme} branding={branding} aiPersonalEnabled={Boolean(publicSettings.ai_personal_enabled)}/>:<div className="workspace-access-denied"><Icon name="shield" size={34}/><h2>AI 工作台仅限管理员</h2><p>普通用户请返回主页面，通过顶部“AI 助手”或 Ctrl/⌘ + J 使用快捷指令。</p><button className="icon-btn primary" onClick={()=>{location.href='/'}}>返回主页面</button></div>) : (
+      ) : publicInsights ? <PublicInsights theme={theme} onThemeChange={changeTheme} branding={branding} settings={publicSettings.publicInsights}/> : aiWorkspace ? (canAccessWorkspace?<AiWorkspace theme={theme} onThemeChange={changeTheme} branding={branding} aiPersonalEnabled={Boolean(publicSettings.ai_personal_enabled)}/>:<div className="workspace-access-denied"><Icon name="shield" size={34}/><h2>AI 工作台仅限管理员</h2><p>普通用户请返回主页面，通过顶部“AI 助手”或 Ctrl/⌘ + J 使用快捷指令。</p><button className="icon-btn primary" onClick={()=>{location.href='/'}}>返回主页面</button></div>) : (
         <PortalWorkspace
           theme={theme}
           onThemeChange={changeTheme}

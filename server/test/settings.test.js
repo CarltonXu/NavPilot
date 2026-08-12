@@ -49,6 +49,13 @@ test('validates and normalizes branding settings', () => {
   assert.throws(() => validateSettingsUpdate({ branding: [] }), { code: 'INVALID_BRANDING_SETTINGS' });
 });
 
+test('validates public insight disclosure settings',()=>{
+  assert.deepEqual(validateSettingsUpdate({publicInsights:{enabled:true,anonymousEnabled:false,searchMinCount:3}}),{publicInsights:{enabled:true,anonymousEnabled:false,searchMinCount:3}});
+  assert.throws(()=>validateSettingsUpdate({publicInsights:{enabled:'yes'}}),{code:'INVALID_PUBLIC_INSIGHTS_SETTINGS'});
+  assert.throws(()=>validateSettingsUpdate({publicInsights:{searchMinCount:1}}),{code:'INVALID_PUBLIC_INSIGHTS_SEARCH_MIN_COUNT'});
+  assert.throws(()=>validateSettingsUpdate({publicInsights:{searchMinCount:21}}),{code:'INVALID_PUBLIC_INSIGHTS_SEARCH_MIN_COUNT'});
+});
+
 test('masks API keys without returning the full value', () => {
   const key = 'sk-super-secret-1234';
   const masked = maskApiKey(key);

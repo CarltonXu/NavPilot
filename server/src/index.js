@@ -11,6 +11,7 @@ const settingsRouter = require('./routes/settings');
 const authRouter = require('./routes/auth');
 const adminRouter = require('./routes/admin');
 const analyticsRouter = require('./routes/analytics');
+const publicInsightsRouter = require('./routes/publicInsights');
 const sharesRouter = require('./routes/shares');
 const transferRouter = require('./routes/transfer');
 const { optionalSession } = require('./middleware/auth');
@@ -18,7 +19,7 @@ const { bootstrapAdmin } = require('./services/authService');
 const { cleanupSessions } = require('./services/sessionService');
 const { startCron } = require('./cron');
 const { configureAppProxy,initializeGeoIp,getGeoStatus } = require('./services/proxyGeoService');
-const { getBrandingSettings, getSetting } = require('./services/settingsService');
+const { getBrandingSettings, getPublicInsightsSettings, getSetting } = require('./services/settingsService');
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (character) => ({
@@ -52,6 +53,7 @@ function createApp() {
   app.use('/api/auth', authRouter);
   app.use('/api/admin', adminRouter);
   app.use('/api/admin/analytics', analyticsRouter);
+  app.use('/api/insights/public', publicInsightsRouter);
   app.use('/api/categories', categoriesRouter);
   app.use('/api/items', itemsRouter);
   app.use('/api/search', searchRouter);
@@ -75,6 +77,7 @@ function createApp() {
       const settings = {
         ai_personal_enabled: getSetting('ai_personal_enabled', 'false') === 'true',
         branding: getBrandingSettings(),
+        publicInsights: getPublicInsightsSettings(),
       };
       res.set('Cache-Control', 'no-cache').type('html').send(renderClientIndex(indexTemplate, settings));
     });

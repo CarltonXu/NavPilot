@@ -9,7 +9,7 @@ export function AuthProvider({ children }) {
   useEffect(() => { setUnauthorizedHandler(() => setState({ loading: false, user: null })); refresh().catch(() => setState({ loading: false, user: null })); return () => setUnauthorizedHandler(null); }, [refresh]);
   const login = useCallback(async (username, password) => { const result = await api.login(username, password); setState({ loading: false, user: result.user }); setLoginOpen(false); return result.user; }, []);
   const register = useCallback(async (body) => { const result = await api.register(body); setState({ loading: false, user: result.user }); setLoginOpen(false); return result.user; }, []);
-  const logout = useCallback(async () => { await api.logout().catch(() => {}); setState({ loading: false, user: null }); if (location.pathname.startsWith('/admin')||location.pathname.startsWith('/ai')) location.href = '/'; }, []);
+  const logout = useCallback(async () => { await api.logout().catch(() => {}); setState({ loading: false, user: null }); if (location.pathname.startsWith('/admin')||location.pathname.startsWith('/ai')||location.pathname.startsWith('/insights/public')) location.href = '/'; }, []);
   const changePassword = useCallback(async (currentPassword, newPassword) => { const result = await api.changePassword(currentPassword, newPassword); setState({ loading: false, user: result.user }); return result.user; }, []);
   const updateProfile = useCallback(async (body) => { const result=await api.updateProfile(body);setState({loading:false,user:result.user});return result.user;},[]);
   const uploadAvatar = useCallback(async (dataUrl) => { const result=await api.uploadAvatar(dataUrl);setState({loading:false,user:result.user});return result.user;},[]);
