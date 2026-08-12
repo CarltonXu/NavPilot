@@ -22,8 +22,8 @@ test('admin account operations protect administrators and audit responses pagina
   const now = Date.now();
   db.prepare("INSERT INTO analytics_events(id,occurred_at_ms,event_name,user_id,item_id,category_id,scope,item_name,item_url,item_owner_id,properties_json) VALUES(?,?, 'item.clicked',?,?,?,?,?,?,?,'{}')")
     .run(crypto.randomUUID(), now, member.id, personalItemId, categoryId, 'personal', 'Private link', 'https://private.example', member.id);
-  db.prepare("INSERT INTO analytics_events(id,occurred_at_ms,event_name,user_id,item_id,scope,country_code,item_name,item_url,properties_json) VALUES(?,?, 'item.clicked',?,?,?,?,?,?,'{}')")
-    .run(crypto.randomUUID(), now, admin.id, publicItemId, 'public', 'CN', 'Public link', 'https://public.example');
+  db.prepare("INSERT INTO analytics_events(id,occurred_at_ms,event_name,user_id,item_id,scope,country_code,city_name,city_source,item_name,item_url,properties_json) VALUES(?,?, 'item.clicked',?,?,?,?,?,?,?,?,'{}')")
+    .run(crypto.randomUUID(), now, admin.id, publicItemId, 'public', 'CN', 'Jinan', 'city_database', 'Public link', 'https://public.example');
   db.prepare("INSERT INTO ai_usage_events(id,actor_user_id,feature,provider_model,success,latency_ms,input_tokens,output_tokens,first_token_ms,realm_scope,realm_owner_id,created_at_ms) VALUES(?,?,'discussion','test-model',1,320,100,40,85,'personal',?,?)")
     .run(crypto.randomUUID(), member.id, member.id, now);
   db.prepare("INSERT INTO ai_plans(id,actor_user_id,realm_scope,realm_owner_id,status,locale,input_hash,operations_json,warnings_json,expected_versions_json,created_at_ms,expires_at_ms) VALUES(?,?,'personal',?,'draft','zh-CN','hash','[]','[]','{}',?,?)")
@@ -110,6 +110,9 @@ test('admin account operations protect administrators and audit responses pagina
   assert.equal(result.body.search.available, true);
   assert.equal(result.body.collaboration.available, false);
   assert.deepEqual(result.body.access.regionCoverage, { total:2, known:1, unknown:1, rate:50, source:'legacy', sources:{proxyHeader:0,geoIpDatabase:0,legacy:1} });
+  assert.deepEqual(result.body.access.cityCoverage, { total:2, known:1, unknown:1, rate:50 });
+  assert.deepEqual(result.body.access.chinaCityCoverage, { total:1, known:1, unknown:0, rate:100 });
+  assert.deepEqual(result.body.access.cities, [{ name:'Jinan', countryCode:'CN', value:1, uniqueVisitors:1 }]);
 
   result = await request(`/api/admin/analytics/summary?days=30&scope=personal&ownerId=${member.id}`);
   assert.equal(result.response.status, 200);

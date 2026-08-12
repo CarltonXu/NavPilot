@@ -150,6 +150,8 @@ function createLatestSchema(db) {
       ip_prefix TEXT,
       country_code TEXT,
       country_source TEXT,
+      city_name TEXT,
+      city_source TEXT,
       item_name TEXT,
       item_url TEXT,
       item_description TEXT,
@@ -572,6 +574,14 @@ function migrateCurrentSchema(db) {
     db.transaction(() => {
       createLatestSchema(db);
       db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(14)').run();
+    })();
+  }
+  if (!applied.has(15)) {
+    db.transaction(() => {
+      addColumnIfMissing(db, 'analytics_events', 'city_name TEXT');
+      addColumnIfMissing(db, 'analytics_events', 'city_source TEXT');
+      db.exec('CREATE INDEX IF NOT EXISTS analytics_city_time_idx ON analytics_events(country_code,city_name,event_name,occurred_at_ms)');
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(15)').run();
     })();
   }
 }

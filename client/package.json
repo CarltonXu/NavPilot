@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "npm run build:extension && vite",
+    "prebuild": "npm run build:city-index",
     "build:extension": "node scripts/package-extension.mjs",
+    "build:city-index": "node scripts/generate-china-city-index.mjs",
     "build": "npm run build:extension && vite build",
     "preview": "vite preview",
     "test": "vitest"
@@ -23,7 +25,10 @@
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.3",
     "@vitejs/plugin-react": "^4.3.1",
+    "city-timezones": "^1.3.4",
     "jsdom": "^29.1.1",
+    "pinyin-pro": "^3.27.0",
+    "province-city-china": "^8.5.8",
     "vite": "^5.4.6",
     "vitest": "^4.1.10"
   }

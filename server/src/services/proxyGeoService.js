@@ -5,8 +5,12 @@ const proxyaddr = require('proxy-addr');
 
 let trustProxy = () => false;
 let trustedEntries = [];
-let geoReader = null;
-let geoState = { configured:false, loaded:false, error:null };
+let countryReader = null;
+let cityReader = null;
+let geoState = {
+  country:{ configured:false, loaded:false, error:null },
+  city:{ configured:false, loaded:false, error:null },
+};
 
 function normalizeAddress(value = '') {
   const raw = String(value || '').trim().replace(/^::ffff:/, '');
@@ -57,44 +61,79 @@ function countryFromTrustedHeader(req) {
 }
 
 function countryFromDatabase(ip) {
-  if (!geoReader || !ip) return null;
+  if (!countryReader || !ip) return null;
   try {
-    const record = geoReader.get(ip);
+    const record = countryReader.get(ip);
     const value = String(record?.country?.iso_code || record?.registered_country?.iso_code || '').toUpperCase();
     return /^[A-Z]{2}$/.test(value) ? value : null;
   } catch { return null; }
 }
 
-function getCountryInfo(req) {
-  const fromHeader = countryFromTrustedHeader(req);
-  if (fromHeader) return { country:fromHeader, source:'proxy_header' };
-  const ip = normalizeAddress(req?.ip || immediatePeer(req));
-  const fromDatabase = countryFromDatabase(ip);
-  return fromDatabase ? { country:fromDatabase, source:'geoip_database' } : { country:null, source:null };
+function cityFromDatabase(ip) {
+  if (!cityReader || !ip) return null;
+  try {
+    const record = cityReader.get(ip);
+    const raw = typeof record?.city === 'string'
+      ? record.city
+      : record?.city?.names?.['zh-CN'] || record?.city?.names?.en || record?.city?.name || '';
+    const value = String(raw || '').trim();
+    return value && value.length <= 100 ? value : null;
+  } catch { return null; }
 }
 
-async function initializeGeoIp(filepath = process.env.NAVPILOT_GEOIP_DB_PATH || '') {
-  geoReader = null;
+function getGeoInfo(req) {
+  const fromHeader = countryFromTrustedHeader(req);
+  const ip = normalizeAddress(req?.ip || immediatePeer(req));
+  const fromDatabase = countryFromDatabase(ip);
+  const city = cityFromDatabase(ip);
+  return {
+    country:fromHeader || fromDatabase || null,
+    source:fromHeader ? 'proxy_header' : fromDatabase ? 'geoip_database' : null,
+    city,
+    citySource:city ? 'city_database' : null,
+  };
+}
+
+function getCountryInfo(req) { return getGeoInfo(req); }
+
+async function openDatabase(filepath, kind) {
   const path = String(filepath || '').trim();
-  geoState = { configured:Boolean(path), loaded:false, error:null };
-  if (!path) return getGeoStatus();
+  const state = { configured:Boolean(path), loaded:false, error:null };
+  if (!path) return { reader:null, state };
   if (!fs.existsSync(path)) {
-    geoState.error = 'database_not_found';
-    console.warn(`[geoip] 数据库不存在，已降级为可信代理国家头: ${path}`);
-    return getGeoStatus();
+    state.error = 'database_not_found';
+    console.warn(`[geoip] ${kind} 数据库不存在: ${path}`);
+    return { reader:null, state };
   }
   try {
-    geoReader = await maxmind.open(path, {
+    const reader = await maxmind.open(path, {
       watchForUpdates:true,
       watchForUpdatesNonPersistent:true,
-      watchForUpdatesHook:() => console.log('[geoip] GeoIP 数据库已热更新'),
+      watchForUpdatesHook:() => console.log(`[geoip] ${kind} 数据库已热更新`),
     });
-    geoState.loaded = true;
-    console.log('[geoip] GeoIP 国家数据库已加载');
+    state.loaded = true;
+    console.log(`[geoip] ${kind} 数据库已加载`);
+    return { reader, state };
   } catch (error) {
-    geoState.error = 'database_invalid';
-    console.warn(`[geoip] 数据库加载失败，已降级为可信代理国家头: ${error.message}`);
+    state.error = 'database_invalid';
+    console.warn(`[geoip] ${kind} 数据库加载失败: ${error.message}`);
+    return { reader:null, state };
   }
+}
+
+async function initializeGeoIp(
+  countryPath = process.env.NAVPILOT_GEOIP_DB_PATH || '',
+  cityPath = process.env.NAVPILOT_GEOIP_CITY_DB_PATH || '',
+) {
+  countryReader = null;
+  cityReader = null;
+  const [country, city] = await Promise.all([
+    openDatabase(countryPath, '国家'),
+    openDatabase(cityPath, '城市'),
+  ]);
+  countryReader = country.reader;
+  cityReader = city.reader;
+  geoState = { country:country.state, city:city.state };
   return getGeoStatus();
 }
 
@@ -102,13 +141,23 @@ function getGeoStatus() {
   return {
     trustedProxyConfigured:trustedEntries.length > 0,
     trustedProxyEntries:trustedEntries.length,
-    geoIpDatabaseConfigured:geoState.configured,
-    geoIpDatabaseLoaded:geoState.loaded,
-    geoIpError:geoState.error,
+    geoIpDatabaseConfigured:geoState.country.configured,
+    geoIpDatabaseLoaded:geoState.country.loaded,
+    geoIpError:geoState.country.error,
+    cityDatabaseConfigured:geoState.city.configured,
+    cityDatabaseLoaded:geoState.city.loaded,
+    cityDatabaseError:geoState.city.error,
     countryHeaders:headerNames(),
   };
 }
 
-function setGeoReaderForTest(reader) { geoReader = reader;geoState = {configured:Boolean(reader),loaded:Boolean(reader),error:null}; }
+function setGeoReaderForTest(reader) {
+  countryReader = reader;
+  geoState.country = {configured:Boolean(reader),loaded:Boolean(reader),error:null};
+}
+function setCityReaderForTest(reader) {
+  cityReader = reader;
+  geoState.city = {configured:Boolean(reader),loaded:Boolean(reader),error:null};
+}
 
-module.exports = { configureTrustedProxy,configureAppProxy,initializeGeoIp,getCountryInfo,getGeoStatus,normalizeAddress,setGeoReaderForTest };
+module.exports = { configureTrustedProxy,configureAppProxy,initializeGeoIp,getCountryInfo,getGeoInfo,getGeoStatus,normalizeAddress,setGeoReaderForTest,setCityReaderForTest };

@@ -7,6 +7,7 @@ import {
   isSmallMapLocation,
   localizedRegionName,
   mapMarkerRadius,
+  normalizeCityKey,
   zoomMapViewport,
 } from "./AdminAnalytics.jsx";
 
@@ -74,6 +75,11 @@ describe("analytics region labels", () => {
       ]),
     ).toBe(false);
     expect(mapMarkerRadius(100, 100)).toBeGreaterThan(mapMarkerRadius(1, 100));
+  });
+
+  it("normalizes city database names for the city-center index", () => {
+    expect(normalizeCityKey("Xi’an")).toBe("xian");
+    expect(normalizeCityKey("Jinan ")).toBe("jinan");
   });
 
   it("aligns trend points and zero values to the same plot grid", () => {

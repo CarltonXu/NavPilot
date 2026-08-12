@@ -71,6 +71,7 @@ function dimension(column, current, limit = 10) {
     "browser_family",
     "os_family",
     "country_code",
+    "city_name",
     "ip_prefix",
   ]);
   if (!allowed.has(column)) throw new Error("Invalid analytics dimension");
@@ -225,6 +226,37 @@ router.get("/summary", (req, res) => {
     source:Number(regionCoverageRaw.geoIpDatabase)>0?(Number(regionCoverageRaw.proxyHeader)>0?'mixed':'geoip_database'):(Number(regionCoverageRaw.proxyHeader)>0?'proxy_country_header':(Number(regionCoverageRaw.legacy)>0?'legacy':'unavailable')),
     sources:{proxyHeader:Number(regionCoverageRaw.proxyHeader)||0,geoIpDatabase:Number(regionCoverageRaw.geoIpDatabase)||0,legacy:Number(regionCoverageRaw.legacy)||0},
   };
+  const cityCoverageRaw = db.prepare(`
+    SELECT COUNT(*) total,
+      SUM(CASE WHEN e.city_name IS NOT NULL AND e.city_name!='' THEN 1 ELSE 0 END) known
+    FROM analytics_events e
+    WHERE e.event_name='item.clicked' AND ${event.sql}
+  `).get(...event.params);
+  const cityCoverage = {
+    total:Number(cityCoverageRaw.total)||0,
+    known:Number(cityCoverageRaw.known)||0,
+    unknown:(Number(cityCoverageRaw.total)||0)-(Number(cityCoverageRaw.known)||0),
+    rate:cityCoverageRaw.total ? Number(((Number(cityCoverageRaw.known||0)/cityCoverageRaw.total)*100).toFixed(1)) : 0,
+  };
+  const chinaCityCoverageRaw = db.prepare(`
+    SELECT COUNT(*) total,
+      SUM(CASE WHEN e.city_name IS NOT NULL AND e.city_name!='' THEN 1 ELSE 0 END) known
+    FROM analytics_events e
+    WHERE e.event_name='item.clicked' AND e.country_code='CN' AND ${event.sql}
+  `).get(...event.params);
+  const chinaCityCoverage = {
+    total:Number(chinaCityCoverageRaw.total)||0,
+    known:Number(chinaCityCoverageRaw.known)||0,
+    unknown:(Number(chinaCityCoverageRaw.total)||0)-(Number(chinaCityCoverageRaw.known)||0),
+    rate:chinaCityCoverageRaw.total ? Number(((Number(chinaCityCoverageRaw.known||0)/chinaCityCoverageRaw.total)*100).toFixed(1)) : 0,
+  };
+  const cities = db.prepare(`
+    SELECT e.city_name name,MAX(e.country_code) countryCode,COUNT(*) value,
+      COUNT(DISTINCT e.user_id) uniqueVisitors
+    FROM analytics_events e
+    WHERE e.event_name='item.clicked' AND e.city_name IS NOT NULL AND e.city_name!='' AND ${event.sql}
+    GROUP BY lower(e.city_name),e.country_code ORDER BY value DESC LIMIT 30
+  `).all(...event.params);
 
   const visitorRows = db.prepare(`
     SELECT e.user_id id,COALESCE(u.display_name,u.username,'匿名用户') name,u.username,
@@ -418,6 +450,7 @@ router.get("/summary", (req, res) => {
     browsers: dimension("browser_family", current),
     systems: dimension("os_family", current),
     regions: dimension("country_code", current),
+    cities,
     networks: dimension("ip_prefix", current),
     statuses,
     categories,
@@ -438,7 +471,7 @@ router.get("/summary", (req, res) => {
       trend,topResources,heatmap,visitors:visitorRows,
       sources:dimension("surface",current),devices:dimension("device_class",current),
       browsers:dimension("browser_family",current),systems:dimension("os_family",current),
-      regions:dimension("country_code",current),networks:dimension("ip_prefix",current),regionCoverage,
+      regions:dimension("country_code",current),cities,networks:dimension("ip_prefix",current),regionCoverage,cityCoverage,chinaCityCoverage,
     },
     resources: { statuses,categories,ownership },
     adoption: { summary:{dau:activityWindows[1],wau:activityWindows[7],mau:activityWindows[30],activeUsers:Number(activeLifecycle.activeUsers)||0,returningUsers:Number(activeLifecycle.returningUsers)||0,newlyActiveUsers:Number(activeLifecycle.newlyActiveUsers)||0},cohorts,growth:selected.scope==='all'?dailySeries(from,days,accountGrowthRows,['registrations']):[],definition:'item_activity' },
