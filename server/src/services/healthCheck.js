@@ -76,9 +76,10 @@ async function checkItem(item, { force = false } = {}) {
 
 async function checkAndPersist(item, options = {}) {
   const result = await checkItem(item, options);
-  db.prepare(`
-    UPDATE items SET status = ?, latency_ms = ?, last_checked_at = datetime('now') WHERE id = ?
-  `).run(result.status, result.latencyMs, item.id);
+  db.transaction(() => {
+    db.prepare(`UPDATE items SET status = ?, latency_ms = ?, last_checked_at = datetime('now') WHERE id = ?`).run(result.status, result.latencyMs, item.id);
+    db.prepare(`INSERT INTO resource_health_events(item_id,item_name,scope,owner_id,status,latency_ms,checked_at_ms) VALUES(?,?,?,?,?,?,?)`).run(item.id,item.name,item.scope,item.owner_id||null,result.status,result.latencyMs,Date.now());
+  })();
   return result;
 }
 

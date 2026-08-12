@@ -119,6 +119,7 @@ export default function GlobalSearch() {
         surface: "global-search",
         viewMode: "command",
         position: index + 1,
+        searchEventId: item.searchEventId,
         eventId: `${Date.now()}-${item.id}-${Math.random().toString(36).slice(2)}`,
       })
       .catch(() => {});

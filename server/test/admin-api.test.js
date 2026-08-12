@@ -100,6 +100,15 @@ test('admin account operations protect administrators and audit responses pagina
   assert.equal(result.body.ai.summary.totalTokens, 140);
   assert.equal(result.body.ai.summary.averageFirstTokenMs, 85);
   assert.equal(result.body.ai.summary.peakRpm, 1);
+  assert.equal(result.body.ai.summary.p95LatencyMs, 320);
+  assert.equal(result.body.ai.summary.p95FirstTokenMs, 85);
+  assert.equal(result.body.adoption.summary.dau, 2);
+  assert.ok(Array.isArray(result.body.adoption.cohorts));
+  assert.equal(result.body.resourceQuality.health.total, 4);
+  assert.ok(Array.isArray(result.body.resourceQuality.matrix));
+  assert.ok(Array.isArray(result.body.resourceQuality.healthTrend));
+  assert.equal(result.body.search.available, true);
+  assert.equal(result.body.collaboration.available, false);
   assert.deepEqual(result.body.access.regionCoverage, { total:2, known:1, unknown:1, rate:50, source:'legacy', sources:{proxyHeader:0,geoIpDatabase:0,legacy:1} });
 
   result = await request(`/api/admin/analytics/summary?days=30&scope=personal&ownerId=${member.id}`);
@@ -109,6 +118,7 @@ test('admin account operations protect administrators and audit responses pagina
   assert.equal(result.body.summary.opens, 1);
   assert.equal(result.body.summary.resources, 1);
   assert.equal(result.body.ai.summary.totalTokens, 140);
+  assert.equal(result.body.collaboration.available, true);
 
   result = await request('/api/admin/analytics/summary?days=30&scope=public');
   assert.equal(result.response.status, 200);

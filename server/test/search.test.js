@@ -65,6 +65,7 @@ test("global search returns and searches complete category paths", async (t) => 
   let result = results.find((item) => item.id === publicItem.id);
   assert.equal(result.categoryName, "Engineering");
   assert.equal(result.categoryPath, "SearchPathCompany / Engineering");
+  assert.match(result.searchEventId, /^search-[a-f0-9-]{36}$/);
 
   results = await search("SearchPathPrivate", session.rawToken);
   result = results.find((item) => item.id === personalItem.id);
@@ -73,6 +74,8 @@ test("global search returns and searches complete category paths", async (t) => 
 
   results = await search("SearchPathPrivate");
   assert.equal(results.some((item) => item.id === personalItem.id), false);
+  const tracked = db.prepare("SELECT COUNT(*) count FROM analytics_events WHERE event_name='search.performed'").get().count;
+  assert.equal(tracked, 3);
 });
 
 test.after(() => db.close());

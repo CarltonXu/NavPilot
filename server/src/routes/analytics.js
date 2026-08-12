@@ -94,6 +94,20 @@ function dailySeries(from, days, rows, fields) {
   });
 }
 
+function percentile(values, ratio) {
+  const sorted = values.map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+  if (!sorted.length) return null;
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * ratio) - 1))];
+}
+
+function utcWeekStart(value) {
+  const date = new Date(value);
+  const day = date.getUTCDay() || 7;
+  date.setUTCHours(0, 0, 0, 0);
+  date.setUTCDate(date.getUTCDate() - day + 1);
+  return date.getTime();
+}
+
 router.get("/users", (req, res) => {
   const rows = db.prepare(`
     SELECT u.id,u.username,u.display_name AS displayName,u.status,
@@ -220,6 +234,122 @@ router.get("/summary", (req, res) => {
     GROUP BY e.user_id ORDER BY value DESC LIMIT 20
   `).all(...event.params);
 
+  const activityWindows = Object.fromEntries([1, 7, 30].map((windowDays) => {
+    const where = eventWhere({ ...selected, from: to - windowDays * 86400000 });
+    const count = db.prepare(`SELECT COUNT(DISTINCT e.user_id) count FROM analytics_events e WHERE e.event_name='item.clicked' AND e.user_id IS NOT NULL AND ${where.sql}`).get(...where.params).count;
+    return [windowDays, Number(count) || 0];
+  }));
+  const allTimeEvent = eventWhere({ ...selected, from: 0 });
+  const activeLifecycle = db.prepare(`
+    SELECT COUNT(*) activeUsers,
+      SUM(CASE WHEN firstAt<? THEN 1 ELSE 0 END) returningUsers,
+      SUM(CASE WHEN firstAt>=? THEN 1 ELSE 0 END) newlyActiveUsers
+    FROM (
+      SELECT e.user_id,MIN(e.occurred_at_ms) firstAt,MAX(e.occurred_at_ms) lastAt
+      FROM analytics_events e
+      WHERE e.event_name='item.clicked' AND e.user_id IS NOT NULL AND ${allTimeEvent.sql}
+      GROUP BY e.user_id HAVING lastAt>=?
+    )
+  `).get(from, from, ...allTimeEvent.params, from);
+  const cohortEnd = utcWeekStart(to) + 7 * 86400000;
+  const cohortStart = cohortEnd - 8 * 7 * 86400000;
+  const firstActivityRows = db.prepare(`
+    SELECT e.user_id userId,MIN(e.occurred_at_ms) firstAt
+    FROM analytics_events e
+    WHERE e.event_name='item.clicked' AND e.user_id IS NOT NULL AND ${allTimeEvent.sql}
+    GROUP BY e.user_id HAVING firstAt>=? AND firstAt<?
+  `).all(...allTimeEvent.params, cohortStart, cohortEnd);
+  const cohortActivityWhere = eventWhere({ ...selected, from: cohortStart });
+  const cohortActivityRows = db.prepare(`
+    SELECT DISTINCT e.user_id userId,date(e.occurred_at_ms/1000,'unixepoch') day
+    FROM analytics_events e
+    WHERE e.event_name='item.clicked' AND e.user_id IS NOT NULL AND ${cohortActivityWhere.sql}
+  `).all(...cohortActivityWhere.params);
+  const activityWeeks = new Map();
+  cohortActivityRows.forEach((row) => {
+    if (!activityWeeks.has(row.userId)) activityWeeks.set(row.userId, new Set());
+    activityWeeks.get(row.userId).add(utcWeekStart(`${row.day}T00:00:00Z`));
+  });
+  const cohorts = Array.from({ length: 8 }, (_, index) => {
+    const weekAt = cohortStart + index * 7 * 86400000;
+    const members = firstActivityRows.filter((row) => utcWeekStart(row.firstAt) === weekAt);
+    const retention = [0, 1, 2, 3].map((offset) => members.length ? Number((members.filter((row) => activityWeeks.get(row.userId)?.has(weekAt + offset * 7 * 86400000)).length / members.length * 100).toFixed(1)) : null);
+    return { week:new Date(weekAt).toISOString().slice(0,10), users:members.length, retention };
+  }).filter((row) => row.users || new Date(`${row.week}T00:00:00Z`).getTime() >= cohortEnd - 4 * 7 * 86400000);
+  const accountGrowthRows = selected.scope === 'all' ? db.prepare(`SELECT date(strftime('%s',created_at),'unixepoch') day,COUNT(*) registrations FROM users WHERE status!='pending_claim' AND strftime('%s',created_at)*1000>=? GROUP BY day ORDER BY day`).all(from) : [];
+
+  const resourceRows = db.prepare(`
+    SELECT i.id,i.name,i.status,i.latency_ms latencyMs,i.last_checked_at lastCheckedAt,
+      i.check_enabled checkEnabled,i.tags_json tagsJson,i.category_id categoryId,i.created_at createdAt,
+      COALESCE(v.visits,0) visits,COALESCE(v.uniqueVisitors,0) uniqueVisitors,
+      (SELECT MAX(e2.occurred_at_ms) FROM analytics_events e2 WHERE e2.event_name='item.clicked' AND e2.item_id=i.id) lastVisitedAt
+    FROM items i
+    LEFT JOIN (
+      SELECT e.item_id,COUNT(*) visits,COUNT(DISTINCT e.user_id) uniqueVisitors
+      FROM analytics_events e WHERE e.event_name='item.clicked' AND ${event.sql} GROUP BY e.item_id
+    ) v ON v.item_id=i.id
+    WHERE ${resource.sql}
+  `).all(...event.params, ...resource.params);
+  const positiveVisits = resourceRows.map((row) => Number(row.visits) || 0).filter(Boolean).sort((a,b)=>a-b);
+  const highUseThreshold = Math.max(2, percentile(positiveVisits, .5) || 2);
+  const matrix = [
+    { name:'high-online', value:resourceRows.filter((row)=>row.visits>=highUseThreshold&&row.status==='online').length },
+    { name:'high-risk', value:resourceRows.filter((row)=>row.visits>=highUseThreshold&&row.status!=='online').length },
+    { name:'low-online', value:resourceRows.filter((row)=>row.visits<highUseThreshold&&row.status==='online').length },
+    { name:'low-risk', value:resourceRows.filter((row)=>row.visits<highUseThreshold&&row.status!=='online').length },
+  ];
+  const latencyValues = resourceRows.map((row)=>row.latencyMs).filter((value)=>value!=null);
+  const staleBefore = to - 90 * 86400000;
+  const health = {
+    total:resourceRows.length,
+    checked:resourceRows.filter((row)=>row.lastCheckedAt).length,
+    checkCoverage:resourceRows.length ? Number((resourceRows.filter((row)=>row.lastCheckedAt).length/resourceRows.length*100).toFixed(1)) : 0,
+    neverVisited:resourceRows.filter((row)=>!row.lastVisitedAt).length,
+    stale90Days:resourceRows.filter((row)=>!row.lastVisitedAt||row.lastVisitedAt<staleBefore).length,
+    highUseOffline:resourceRows.filter((row)=>row.visits>=highUseThreshold&&row.status==='offline').length,
+    checksDisabled:resourceRows.filter((row)=>!row.checkEnabled).length,
+    latency:{p50:percentile(latencyValues,.5),p95:percentile(latencyValues,.95),p99:percentile(latencyValues,.99)},
+    highUseThreshold,
+  };
+  const healthClauses=['h.checked_at_ms>=?'],healthParams=[from];
+  if(selected.scope!=='all'){healthClauses.push('h.scope=?');healthParams.push(selected.scope);}
+  if(selected.ownerId){healthClauses.push('h.owner_id=?');healthParams.push(selected.ownerId);}
+  const healthTrendRows=db.prepare(`SELECT date(h.checked_at_ms/1000,'unixepoch') day,COUNT(*) checks,SUM(CASE WHEN h.status='online' THEN 1 ELSE 0 END) online,SUM(CASE WHEN h.status='offline' THEN 1 ELSE 0 END) offline,ROUND(AVG(CASE WHEN h.status='online' THEN h.latency_ms END)) averageLatencyMs FROM resource_health_events h WHERE ${healthClauses.join(' AND ')} GROUP BY day ORDER BY day`).all(...healthParams);
+  const healthTrend=dailySeries(from,days,healthTrendRows,['checks','online','offline','averageLatencyMs']).map((row)=>({...row,availability:row.checks?Number((row.online/row.checks*100).toFixed(1)):null}));
+  const firstHealthEvent=db.prepare('SELECT MIN(checked_at_ms) startedAt FROM resource_health_events').get().startedAt;
+  const slowResources = resourceRows.filter((row)=>row.latencyMs!=null).sort((a,b)=>b.latencyMs-a.latencyMs).slice(0,10).map(({id,name,latencyMs,status,visits})=>({id,name,latencyMs,status,visits}));
+  const tagCounts = new Map();
+  resourceRows.forEach((row)=>{try{JSON.parse(row.tagsJson||'[]').forEach((tag)=>tagCounts.set(String(tag),1+(tagCounts.get(String(tag))||0)));}catch{/* legacy tags */}});
+  const categoryHealth = {
+    uncategorized:resourceRows.filter((row)=>!row.categoryId).length,
+    withoutTags:resourceRows.filter((row)=>{try{return !JSON.parse(row.tagsJson||'[]').length;}catch{return true;}}).length,
+    tags:[...tagCounts].map(([name,value])=>({name,value})).sort((a,b)=>b.value-a.value).slice(0,15),
+  };
+
+  const searchWhere = `e.occurred_at_ms>=?`;
+  const searchRows = selected.scope === 'all' ? db.prepare(`SELECT e.id,e.user_id userId,e.occurred_at_ms occurredAt,json_extract(e.properties_json,'$.term') term,CAST(json_extract(e.properties_json,'$.resultCount') AS INTEGER) resultCount,CAST(json_extract(e.properties_json,'$.latencyMs') AS INTEGER) latencyMs FROM analytics_events e WHERE e.event_name='search.performed' AND ${searchWhere}`).all(from) : [];
+  const searchClicks = selected.scope === 'all' ? db.prepare(`SELECT json_extract(e.properties_json,'$.searchEventId') searchEventId,json_extract(e.properties_json,'$.term') term,CAST(json_extract(e.properties_json,'$.position') AS INTEGER) position,e.occurred_at_ms occurredAt FROM analytics_events e WHERE e.event_name='search.result_clicked' AND ${searchWhere}`).all(from) : [];
+  const clickedSearches = new Set(searchClicks.map((row)=>row.searchEventId).filter(Boolean));
+  const searchLatencies = searchRows.map((row)=>row.latencyMs).filter((value)=>value!=null);
+  const searchTermMap = new Map();
+  searchRows.filter((row)=>row.term&&row.term!=='[sensitive]').forEach((row)=>{const currentTerm=searchTermMap.get(row.term)||{name:row.term,value:0,noResult:0,clicks:0};currentTerm.value+=1;currentTerm.noResult+=row.resultCount===0?1:0;currentTerm.clicks+=clickedSearches.has(row.id)?1:0;searchTermMap.set(row.term,currentTerm);});
+  const searchTrendRows = new Map();
+  searchRows.forEach((row)=>{const day=new Date(row.occurredAt).toISOString().slice(0,10),currentDay=searchTrendRows.get(day)||{day,searches:0,noResults:0,clicks:0};currentDay.searches+=1;currentDay.noResults+=row.resultCount===0?1:0;currentDay.clicks+=clickedSearches.has(row.id)?1:0;searchTrendRows.set(day,currentDay);});
+  const searchFirstEvent = db.prepare("SELECT MIN(occurred_at_ms) startedAt FROM analytics_events WHERE event_name='search.performed'").get().startedAt;
+  const searchAnalytics = {
+    available:selected.scope==='all',startedAt:searchFirstEvent||null,
+    summary:{searches:searchRows.length,users:new Set(searchRows.map((row)=>row.userId).filter(Boolean)).size,clicks:clickedSearches.size,clickThroughRate:searchRows.length?Number((clickedSearches.size/searchRows.length*100).toFixed(1)):0,noResultRate:searchRows.length?Number((searchRows.filter((row)=>row.resultCount===0).length/searchRows.length*100).toFixed(1)):0,averageLatencyMs:searchRows.length?Math.round(searchLatencies.reduce((sum,value)=>sum+value,0)/(searchLatencies.length||1)):null,p95LatencyMs:percentile(searchLatencies,.95),averageClickPosition:searchClicks.length?Number((searchClicks.reduce((sum,row)=>sum+(row.position||0),0)/searchClicks.length).toFixed(1)):null},
+    trend:dailySeries(from,days,[...searchTrendRows.values()],['searches','noResults','clicks']),
+    terms:[...searchTermMap.values()].sort((a,b)=>b.value-a.value).slice(0,15),
+    zeroResultTerms:[...searchTermMap.values()].filter((row)=>row.noResult).sort((a,b)=>b.noResult-a.noResult).slice(0,12),
+  };
+  const shareRows = selected.scope === 'personal' ? db.prepare(`SELECT s.status,s.created_at_ms createdAt,s.responded_at_ms respondedAt,json_array_length(s.snapshot_json,'$.items') itemCount,json_extract(s.snapshot_json,'$.sourceScope') sourceScope FROM resource_shares s WHERE s.created_at_ms>=? ${selected.ownerId?'AND s.sender_user_id=?':''}`).all(from,...(selected.ownerId?[selected.ownerId]:[])) : [];
+  const collaboration = {
+    available:selected.scope==='personal',
+    summary:{shares:shareRows.length,items:shareRows.reduce((sum,row)=>sum+(Number(row.itemCount)||0),0),accepted:shareRows.filter((row)=>row.status==='accepted').length,pending:shareRows.filter((row)=>row.status==='pending').length,rejected:shareRows.filter((row)=>row.status==='rejected').length,acceptanceRate:shareRows.filter((row)=>row.status!=='pending').length?Number((shareRows.filter((row)=>row.status==='accepted').length/shareRows.filter((row)=>row.status!=='pending').length*100).toFixed(1)):0,averageResponseHours:(()=>{const values=shareRows.filter((row)=>row.respondedAt).map((row)=>(row.respondedAt-row.createdAt)/3600000);return values.length?Number((values.reduce((sum,value)=>sum+value,0)/values.length).toFixed(1)):null;})()},
+    statuses:['accepted','pending','rejected'].map((name)=>({name,value:shareRows.filter((row)=>row.status===name).length})),
+  };
+
   const aiSummaryRaw = db.prepare(`
     SELECT COUNT(*) requests,COUNT(DISTINCT a.actor_user_id) users,
       COALESCE(SUM(a.input_tokens),0) inputTokens,COALESCE(SUM(a.output_tokens),0) outputTokens,
@@ -238,7 +368,9 @@ router.get("/summary", (req, res) => {
   const aiTrendRows = db.prepare(`
     SELECT date(a.created_at_ms/1000,'unixepoch') day,COUNT(*) requests,
       SUM(COALESCE(a.input_tokens,0)) inputTokens,SUM(COALESCE(a.output_tokens,0)) outputTokens,
-      SUM(COALESCE(a.input_tokens,0)+COALESCE(a.output_tokens,0)) totalTokens
+      SUM(COALESCE(a.input_tokens,0)+COALESCE(a.output_tokens,0)) totalTokens,
+      ROUND(AVG(a.latency_ms)) averageLatencyMs,ROUND(AVG(a.first_token_ms)) averageFirstTokenMs,
+      ROUND(AVG(a.success)*100,1) successRate
     FROM ai_usage_events a WHERE ${aiFilter.sql} GROUP BY day ORDER BY day
   `).all(...aiFilter.params);
   const aiUsers = db.prepare(`
@@ -262,6 +394,8 @@ router.get("/summary", (req, res) => {
     peakTpm: Math.max(0, ...minuteRows.map((row) => row.tokens)),
     averageRpm: Number((aiSummaryRaw.requests / activeMinutes).toFixed(1)),
     averageTpm: Number((aiSummaryRaw.totalTokens / activeMinutes).toFixed(1)),
+    p95LatencyMs: percentile(db.prepare(`SELECT a.latency_ms value FROM ai_usage_events a WHERE ${aiFilter.sql}`).all(...aiFilter.params).map((row)=>row.value),.95),
+    p95FirstTokenMs: percentile(db.prepare(`SELECT a.first_token_ms value FROM ai_usage_events a WHERE a.first_token_ms IS NOT NULL AND ${aiFilter.sql}`).all(...aiFilter.params).map((row)=>row.value),.95),
   };
   const aiUses = aiSummary.requests;
   const summary = {
@@ -307,12 +441,17 @@ router.get("/summary", (req, res) => {
       regions:dimension("country_code",current),networks:dimension("ip_prefix",current),regionCoverage,
     },
     resources: { statuses,categories,ownership },
+    adoption: { summary:{dau:activityWindows[1],wau:activityWindows[7],mau:activityWindows[30],activeUsers:Number(activeLifecycle.activeUsers)||0,returningUsers:Number(activeLifecycle.returningUsers)||0,newlyActiveUsers:Number(activeLifecycle.newlyActiveUsers)||0},cohorts,growth:selected.scope==='all'?dailySeries(from,days,accountGrowthRows,['registrations']):[],definition:'item_activity' },
+    resourceQuality: { health,matrix,slowResources,categoryHealth,healthTrend,historyStartedAt:firstHealthEvent||null },
+    search: searchAnalytics,
+    collaboration,
     ai: {
       summary:aiSummary,
-      trend:dailySeries(from,days,aiTrendRows,["requests","inputTokens","outputTokens","totalTokens"]),
+      trend:dailySeries(from,days,aiTrendRows,["requests","inputTokens","outputTokens","totalTokens","averageLatencyMs","averageFirstTokenMs","successRate"]),
       users:aiUsers,
       models:aiDimension("provider_model"),
       features:aiDimension("feature"),
+      errors:db.prepare(`SELECT COALESCE(a.error_code,'unknown') name,COUNT(*) value FROM ai_usage_events a WHERE a.success=0 AND ${aiFilter.sql} GROUP BY a.error_code ORDER BY value DESC LIMIT 10`).all(...aiFilter.params),
       notes:{ttft:"streaming_only",throughput:"active_minutes"},
     },
   });

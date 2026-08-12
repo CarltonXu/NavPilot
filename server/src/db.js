@@ -157,6 +157,16 @@ function createLatestSchema(db) {
       item_owner_id TEXT,
       properties_json TEXT NOT NULL DEFAULT '{}'
     );
+    CREATE TABLE IF NOT EXISTS resource_health_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      item_id INTEGER,
+      item_name TEXT,
+      scope TEXT NOT NULL CHECK(scope IN ('public','personal')),
+      owner_id TEXT,
+      status TEXT NOT NULL CHECK(status IN ('online','offline','unknown')),
+      latency_ms INTEGER,
+      checked_at_ms INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS command_executions (
       id TEXT PRIMARY KEY,
       plan_id TEXT NOT NULL,
@@ -324,6 +334,8 @@ function createLatestSchema(db) {
     CREATE INDEX IF NOT EXISTS analytics_event_time_idx ON analytics_events(event_name,occurred_at_ms);
     CREATE INDEX IF NOT EXISTS analytics_item_time_idx ON analytics_events(item_id,event_name,occurred_at_ms);
     CREATE INDEX IF NOT EXISTS analytics_user_time_idx ON analytics_events(user_id,occurred_at_ms);
+    CREATE INDEX IF NOT EXISTS resource_health_time_idx ON resource_health_events(checked_at_ms,status);
+    CREATE INDEX IF NOT EXISTS resource_health_realm_time_idx ON resource_health_events(scope,owner_id,checked_at_ms);
     CREATE INDEX IF NOT EXISTS audit_log_time_idx ON audit_log(created_at DESC);
     CREATE INDEX IF NOT EXISTS audit_log_action_idx ON audit_log(action,created_at DESC);
     CREATE INDEX IF NOT EXISTS sessions_lookup_idx ON sessions(token_hash, revoked_at);
@@ -554,6 +566,12 @@ function migrateCurrentSchema(db) {
       addColumnIfMissing(db, 'analytics_events', 'country_source TEXT');
       db.prepare("UPDATE analytics_events SET country_source='legacy' WHERE country_code IS NOT NULL AND country_code!='' AND country_source IS NULL").run();
       db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(13)').run();
+    })();
+  }
+  if (!applied.has(14)) {
+    db.transaction(() => {
+      createLatestSchema(db);
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(14)').run();
     })();
   }
 }
