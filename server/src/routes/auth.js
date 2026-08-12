@@ -5,6 +5,7 @@ const { createSession, revokeSession, revokeAllSessions, getTokenFromRequest, se
 const { requireUser } = require('../middleware/auth');
 const { audit, analytics } = require('../services/eventService');
 const { createUser } = require('../services/authService');
+const { saveImageDataUrl, removeManagedUpload } = require('../services/uploadService');
 
 const router = express.Router();
 const authAttempts = new Map();
@@ -30,6 +31,8 @@ function cleanProfile(body){
 }
 router.get('/profile',requireUser,(req,res)=>res.json({user:sanitizeUser(db.prepare('SELECT * FROM users WHERE id=?').get(req.auth.user.id))}));
 router.patch('/profile',requireUser,(req,res)=>{try{const profile=cleanProfile(req.body||{}),before=sanitizeUser(db.prepare('SELECT * FROM users WHERE id=?').get(req.auth.user.id));db.prepare("UPDATE users SET display_name=?,avatar_url=?,phone=?,email=?,preferences_json=?,updated_at=datetime('now') WHERE id=?").run(profile.displayName,profile.avatarUrl||null,profile.phone||null,profile.email||null,JSON.stringify(profile.preferences),req.auth.user.id);const user=sanitizeUser(db.prepare('SELECT * FROM users WHERE id=?').get(req.auth.user.id));audit(req,'user.profile_updated',{targetType:'user',targetId:user.id,metadata:{changedFields:['displayName','avatarUrl','phone','email','preferences'],before:{displayName:before.displayName},after:{displayName:user.displayName}}});return res.json({user});}catch(error){return res.status(error.status||400).json({code:error.code||'INVALID_PROFILE',error:error.message});}});
+
+router.post('/avatar',requireUser,(req,res)=>{try{const row=db.prepare('SELECT * FROM users WHERE id=?').get(req.auth.user.id);const url=saveImageDataUrl(req.body?.dataUrl,{namespace:'avatars',name:req.auth.user.id});db.prepare("UPDATE users SET avatar_url=?,updated_at=datetime('now') WHERE id=?").run(url,req.auth.user.id);if(row.avatar_url!==url)removeManagedUpload(row.avatar_url,'avatars');const user=sanitizeUser(db.prepare('SELECT * FROM users WHERE id=?').get(req.auth.user.id));audit(req,'user.avatar_uploaded',{targetType:'user',targetId:user.id,metadata:{url}});return res.status(201).json({user,url});}catch(error){return res.status(error.status||500).json({code:error.code||'AVATAR_UPLOAD_FAILED',error:error.status?error.message:'头像上传失败'});}});
 
 router.post('/login', async (req, res) => {
   if (rateLimited(req, `login:${String(req.body.username || '').toLowerCase()}`, 8, 15 * 60 * 1000)) { audit(req,'auth.login.rate_limited',{outcome:'denied',metadata:{reason:'rate_limited'}}); return res.status(429).json({ code: 'AUTH_RATE_LIMITED', error: '登录尝试过多，请稍后重试' }); }

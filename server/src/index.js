@@ -18,12 +18,36 @@ const { bootstrapAdmin } = require('./services/authService');
 const { cleanupSessions } = require('./services/sessionService');
 const { startCron } = require('./cron');
 const { configureAppProxy,initializeGeoIp,getGeoStatus } = require('./services/proxyGeoService');
+const { getBrandingSettings, getSetting } = require('./services/settingsService');
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (character) => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;',
+  })[character]);
+}
+function serializeBootstrap(value) {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+function renderClientIndex(template, settings) {
+  const branding = settings.branding || {};
+  const title = escapeHtml(branding.siteName || 'NavPilot');
+  const favicon = escapeHtml(branding.faviconUrl || branding.logoUrl || '');
+  return template
+    .replace(/<!--NAVPILOT_TITLE-->([\s\S]*?)<!--\/NAVPILOT_TITLE-->/, title)
+    .replace(/<!--NAVPILOT_FAVICON-->([\s\S]*?)<!--\/NAVPILOT_FAVICON-->/, (_, fallback) => favicon || fallback)
+    .replace(/<!--NAVPILOT_BOOTSTRAP-->[\s\S]*?<!--\/NAVPILOT_BOOTSTRAP-->/, serializeBootstrap(settings));
+}
 
 function createApp() {
   const app = express();
   app.disable('x-powered-by');
   configureAppProxy(app);
-  app.use(express.json({ limit: '5mb' }));
+  app.use(express.json({ limit: '6mb' }));
   app.use('/api', optionalSession);
   app.use('/api/auth', authRouter);
   app.use('/api/admin', adminRouter);
@@ -36,10 +60,24 @@ function createApp() {
   app.use('/api/shares', sharesRouter);
   app.use('/api/transfer', transferRouter);
   app.get('/api/health', (req, res) => res.json({ ok: true, geoIp:getGeoStatus() }));
+  app.use('/uploads', express.static(require('./services/uploadService').getUploadRoot(), {
+    index:false,
+    fallthrough:false,
+    immutable:true,
+    maxAge:'1y',
+    dotfiles:'deny',
+  }));
   const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');
   if (fs.existsSync(clientDist)) {
-    app.use(express.static(clientDist));
-    app.get(/^\/(?!api).*/, (req, res) => res.sendFile(path.join(clientDist, 'index.html')));
+    const indexTemplate = fs.readFileSync(path.join(clientDist, 'index.html'), 'utf8');
+    app.use(express.static(clientDist, { index:false }));
+    app.get(/^\/(?!api).*/, (req, res) => {
+      const settings = {
+        ai_personal_enabled: getSetting('ai_personal_enabled', 'false') === 'true',
+        branding: getBrandingSettings(),
+      };
+      res.set('Cache-Control', 'no-cache').type('html').send(renderClientIndex(indexTemplate, settings));
+    });
   }
   app.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
@@ -60,4 +98,4 @@ async function start() {
 }
 
 if (require.main === module) start().catch((error) => { console.error(error); process.exit(1); });
-module.exports = { createApp, start };
+module.exports = { createApp, start, renderClientIndex };

@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useAuth } from "../auth/AuthContext.jsx";
 import { useI18n } from "../i18n/LocaleContext.jsx";
 import Icon from "./Icon.jsx";
+import AvatarCropper from "./AvatarCropper.jsx";
 
 const copy = {
   "zh-CN": {
@@ -17,8 +18,7 @@ const copy = {
     username: "用户名",
     immutable: "用户名是唯一登录标识，注册后不可修改",
     displayName: "显示名",
-    avatar: "头像地址",
-    avatarHint: "支持 HTTPS 图片地址",
+    avatarHint: "点击头像直接选择图片并裁剪",
     phone: "手机号",
     email: "邮箱",
     theme: "界面主题",
@@ -51,8 +51,7 @@ const copy = {
     username: "Username",
     immutable: "Your unique sign-in name cannot be changed",
     displayName: "Display name",
-    avatar: "Avatar URL",
-    avatarHint: "Use an HTTPS image URL",
+    avatarHint: "Click the avatar to choose and crop an image",
     phone: "Phone",
     email: "Email",
     theme: "Theme",
@@ -107,6 +106,8 @@ export default function UserProfileModal({ onClose }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
+  const [avatarFile,setAvatarFile]=useState(null);
+  const avatarInputRef=useRef(null);
 
   useEffect(() => {
     closeRef.current?.focus();
@@ -149,6 +150,13 @@ export default function UserProfileModal({ onClose }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function uploadAvatar(dataUrl) {
+    setBusy(true);setError("");setSaved("");
+    try { const user=await auth.uploadAvatar(dataUrl);setDraft(current=>({...current,avatarUrl:user.avatarUrl}));setAvatarFile(null);setSaved(locale==='en'?'Avatar uploaded and synced':'头像已上传并同步'); }
+    catch(e){setError(errorMessage(e));}
+    finally{setBusy(false);}
   }
 
   const tabs = [
@@ -231,6 +239,7 @@ export default function UserProfileModal({ onClose }) {
             </div>
             {tab === "profile" && (
               <>
+                <div className="profile-avatar-center"><button type="button" className={`profile-title-avatar ${busy?'busy':''}`} disabled={busy} onClick={()=>avatarInputRef.current?.click()} title={c.avatarHint} aria-label={c.avatarHint}>{draft.avatarUrl?<img src={draft.avatarUrl} alt=""/>:<span>{String(draft.displayName||auth.user.username).slice(0,1).toUpperCase()}</span>}<i><Icon name={busy?'refresh':'edit'} className={busy?'batch-identify-spinner':''} size={13}/></i></button><strong>{draft.displayName||auth.user.username}</strong><small>{c.avatarHint}</small><input ref={avatarInputRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={event=>{const selected=event.target.files?.[0];event.target.value='';if(!selected)return;if(selected.size>10*1024*1024){setError(locale==='en'?'Image must be 10MB or smaller':'原始图片不能超过 10MB');return;}setAvatarFile(selected);}}/></div>
                 <div className="form-row">
                   <label>{c.username}</label>
                   <input
@@ -248,17 +257,6 @@ export default function UserProfileModal({ onClose }) {
                       setDraft({ ...draft, displayName: e.target.value })
                     }
                   />
-                </div>
-                <div className="form-row">
-                  <label>{c.avatar}</label>
-                  <input
-                    value={draft.avatarUrl}
-                    placeholder="https://..."
-                    onChange={(e) =>
-                      setDraft({ ...draft, avatarUrl: e.target.value })
-                    }
-                  />
-                  <div className="hint">{c.avatarHint}</div>
                 </div>
                 <div className="form-grid-2">
                   <div className="form-row">
@@ -419,6 +417,7 @@ export default function UserProfileModal({ onClose }) {
           </button>
         </footer>
       </div>
+      {avatarFile&&<AvatarCropper file={avatarFile} locale={locale} busy={busy} onCancel={()=>!busy&&setAvatarFile(null)} onConfirm={uploadAvatar}/>}
     </div>,
     document.body,
   );

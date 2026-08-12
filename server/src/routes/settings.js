@@ -17,6 +17,7 @@ const {
 
 const router = express.Router();
 const { audit } = require('../services/eventService');
+const { saveImageDataUrl, removeManagedUpload } = require('../services/uploadService');
 
 router.get('/public', (req, res) => {
   res.json({
@@ -40,6 +41,35 @@ router.put('/admin', requireAdmin, requirePasswordChanged, (req, res) => {
       error: error.status ? error.message : '系统设置保存失败',
     });
   }
+});
+
+router.post('/admin/branding-assets', requireAdmin, requirePasswordChanged, (req, res) => {
+  try {
+    const kind = req.body?.kind;
+    if (!['logo','favicon'].includes(kind)) return res.status(400).json({ code:'INVALID_BRANDING_ASSET_KIND', error:'品牌图片类型无效' });
+    const before = getBrandingSettings();
+    const field = kind === 'logo' ? 'logoUrl' : 'faviconUrl';
+    const url = saveImageDataUrl(req.body?.dataUrl, { namespace:'branding', name:kind });
+    setSetting(kind === 'logo' ? 'site_logo_url' : 'site_favicon_url', url);
+    if (before[field] !== url) removeManagedUpload(before[field], 'branding');
+    const branding = getBrandingSettings();
+    audit(req,'settings.branding_asset.uploaded',{targetType:'settings',targetId:kind,metadata:{kind,url}});
+    return res.status(201).json({ branding, url });
+  } catch (error) {
+    return res.status(error.status || 500).json({ code:error.code || 'BRANDING_UPLOAD_FAILED', error:error.status ? error.message : '品牌图片上传失败' });
+  }
+});
+
+router.delete('/admin/branding-assets/:kind', requireAdmin, requirePasswordChanged, (req, res) => {
+  const kind = req.params.kind;
+  if (!['logo','favicon'].includes(kind)) return res.status(400).json({ code:'INVALID_BRANDING_ASSET_KIND', error:'品牌图片类型无效' });
+  const before = getBrandingSettings();
+  const field = kind === 'logo' ? 'logoUrl' : 'faviconUrl';
+  setSetting(kind === 'logo' ? 'site_logo_url' : 'site_favicon_url', '');
+  removeManagedUpload(before[field], 'branding');
+  const branding = getBrandingSettings();
+  audit(req,'settings.branding_asset.cleared',{targetType:'settings',targetId:kind,metadata:{kind}});
+  return res.json({ branding });
 });
 
 router.put('/ai-personal-enabled', requireAdmin, requirePasswordChanged, (req, res) => {

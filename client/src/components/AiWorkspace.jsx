@@ -340,9 +340,9 @@ export default function AiWorkspace({
           <Icon name="chevronLeft" size={15} />
           {c.back}
         </button>
-        <AccountMenu />
         <LocaleSwitcher />
         <ThemeSwitcher theme={theme} onChange={onThemeChange} />
+        <AccountMenu />
       </div>
     </header>
   );

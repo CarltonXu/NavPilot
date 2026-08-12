@@ -36,6 +36,7 @@ import {
 } from "./utils/workspaceSnapshot.js";
 import PersonalToolsModal from "./components/PersonalToolsModal.jsx";
 import GlobalSearch, { openGlobalSearch } from "./components/GlobalSearch.jsx";
+import DropdownMenu from "./components/DropdownMenu.jsx";
 import RecognitionResultDialog from "./components/RecognitionResultDialog.jsx";
 import ResourceOverview from "./components/ResourceOverview.jsx";
 import { browserPreference } from "./utils/browserPreference.js";
@@ -216,6 +217,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
   const { t, errorMessage, locale } = useI18n();
   const generation = useRef(0);
   const favoriteDefaultKey = useRef(null);
+  const tagTrackRef = useRef(null);
   const identityKey = auth.loading
     ? null
     : auth.user
@@ -257,6 +259,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     [recognitionResult, setRecognitionResult] = useState(null),
     [showRecognitionResult, setShowRecognitionResult] = useState(false),
     [favoriteBusy, setFavoriteBusy] = useState(new Set()),
+    [tagsOverflowing, setTagsOverflowing] = useState(false),
     [assistantRequest, setAssistantRequest] = useState(null);
   const spaceReady =
     identityKey !== null &&
@@ -421,6 +424,23 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       ].sort((a, b) => a.localeCompare(b)),
     [items],
   );
+  useEffect(() => {
+    const track = tagTrackRef.current;
+    if (!track) {
+      setTagsOverflowing(false);
+      return;
+    }
+    const measure = () =>
+      setTagsOverflowing(track.scrollWidth > track.clientWidth + 2);
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(track);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [allTags, favoriteItems.length]);
   const filtered = useMemo(
     () =>
       filterByCategory(items, categories, activeCategory).filter((item) => {
@@ -951,9 +971,9 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
           <kbd>{navigator.platform?.includes("Mac") ? "⌘ K" : "Ctrl K"}</kbd>
         </button>
         <div className="topbar-actions">
-          <AccountMenu disabled={recognizing} />
           <LocaleSwitcher />
           <ThemeSwitcher theme={theme} onChange={onThemeChange} />
+          <AccountMenu disabled={recognizing} />
         </div>
       </header>
       <SpaceSwitcher
@@ -1012,25 +1032,79 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       </div>
       {(allTags.length > 0 || favoriteItems.length > 0) && (
         <div className="tag-filter-bar">
-          <span>
+          <span className="tag-filter-label">
             <Icon name="tag" size={14} />
             {locale === "en" ? "Tags" : "标签"}
           </span>
-          <button
-            className={!activeTag ? "active" : ""}
-            onClick={() => setActiveTag("")}
+          <div
+            className="tag-filter-track"
+            ref={tagTrackRef}
+            onWheel={(event) => {
+              const track = event.currentTarget;
+              if (
+                track.scrollWidth > track.clientWidth &&
+                Math.abs(event.deltaY) > Math.abs(event.deltaX)
+              ) {
+                track.scrollLeft += event.deltaY;
+                event.preventDefault();
+              }
+            }}
           >
-            {locale === "en" ? "All" : "全部"}
-          </button>
-          {allTags.map((tag) => (
             <button
-              key={tag}
-              className={activeTag === tag ? "active" : ""}
-              onClick={() => setActiveTag(tag)}
+              className={!activeTag ? "active" : ""}
+              onClick={() => setActiveTag("")}
             >
-              #{tag}
+              {locale === "en" ? "All" : "全部"}
             </button>
-          ))}
+            {allTags.map((tag) => (
+              <button
+                key={tag}
+                className={activeTag === tag ? "active" : ""}
+                onClick={() => setActiveTag(tag)}
+              >
+                #{tag}
+              </button>
+            ))}
+          </div>
+          {tagsOverflowing && (
+            <DropdownMenu
+              className="tag-overflow-menu"
+              menuClassName="tag-overflow-panel"
+              trigger={
+                <button
+                  className="tag-overflow-trigger"
+                  aria-label={locale === "en" ? "Show all tags" : "展开全部标签"}
+                  title={locale === "en" ? "Show all tags" : "展开全部标签"}
+                >
+                  <Icon name="chevronDown" size={14} />
+                </button>
+              }
+            >
+              <header>
+                <strong>{locale === "en" ? "All tags" : "全部标签"}</strong>
+                <small>{allTags.length}</small>
+              </header>
+              <div className="tag-overflow-options">
+                <button
+                  role="menuitem"
+                  className={!activeTag ? "active" : ""}
+                  onClick={() => setActiveTag("")}
+                >
+                  {locale === "en" ? "All" : "全部"}
+                </button>
+                {allTags.map((tag) => (
+                  <button
+                    role="menuitem"
+                    key={tag}
+                    className={activeTag === tag ? "active" : ""}
+                    onClick={() => setActiveTag(tag)}
+                  >
+                    #{tag}
+                  </button>
+                ))}
+              </div>
+            </DropdownMenu>
+          )}
           {favoriteItems.length > 0 && <button
             className={`tag-filter-favorite ${activeTag === FAVORITES_FILTER ? "active" : ""}`}
             onClick={() => setActiveTag(FAVORITES_FILTER)}
@@ -1164,10 +1238,12 @@ export default function App() {
     localStorage.setItem("navpilot_theme", next);
     setTheme(next);
   }, []);
-  const [publicSettings, setPublicSettings] = useState({
-    ai_personal_enabled: false,
-    branding: { siteName: "NavPilot", logoUrl: "", faviconUrl: "" },
-  });
+  const [publicSettings, setPublicSettings] = useState(() =>
+    window.__NAVPILOT_BOOTSTRAP__ || {
+      ai_personal_enabled: false,
+      branding: { siteName: "NavPilot", logoUrl: "", faviconUrl: "" },
+    },
+  );
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
