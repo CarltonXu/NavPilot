@@ -24,8 +24,10 @@ const MAP_WIDTH = 960,
   MAP_HEIGHT = 520,
   MAP_MIN_SCALE = 1,
   MAP_WORLD_MAX_SCALE = 8,
-  MAP_PROVINCE_MAX_SCALE = 12,
-  MAP_CITY_MAX_SCALE = 20;
+  MAP_PROVINCE_MAX_SCALE = 16,
+  MAP_CITY_MAX_SCALE = 32,
+  MAP_PROVINCE_FOCUS_SCALE = 22,
+  MAP_CITY_FOCUS_SCALE = 28;
 export function mapZoomLimit(mode) {
   return mode === "cities"
     ? MAP_CITY_MAX_SCALE
@@ -666,7 +668,7 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
     setMode("cities");
     setSelectedProvince(location);
     setActive(null);
-    if (location?.bounds) updateViewport(fitMapBounds(location.bounds, 14), MAP_CITY_MAX_SCALE);
+    if (location?.bounds) updateViewport(fitMapBounds(location.bounds, MAP_PROVINCE_FOCUS_SCALE), MAP_CITY_MAX_SCALE);
   };
   const returnToWorld = () => {
     setMode("world");
@@ -688,7 +690,7 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
     returnToWorld();
   };
   const focusCity = (location) => {
-    const scale = Math.min(MAP_CITY_MAX_SCALE, Math.max(18, viewportRef.current.scale));
+    const scale = Math.min(MAP_CITY_MAX_SCALE, Math.max(MAP_CITY_FOCUS_SCALE, viewportRef.current.scale));
     updateViewport({
       scale,
       x: MAP_WIDTH / 2 - location.point[0] * scale,
@@ -697,7 +699,7 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
   };
   const focusData = () => {
     if (mode === "cities") {
-      if (!selectedMappedCities.length) return selectedProvince?.bounds && updateViewport(fitMapBounds(selectedProvince.bounds, 14), MAP_CITY_MAX_SCALE);
+      if (!selectedMappedCities.length) return selectedProvince?.bounds && updateViewport(fitMapBounds(selectedProvince.bounds, MAP_PROVINCE_FOCUS_SCALE), MAP_CITY_MAX_SCALE);
       const xs = selectedMappedCities.map((item) => item.point[0]);
       const ys = selectedMappedCities.map((item) => item.point[1]);
       return updateViewport(
@@ -706,7 +708,7 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
             [Math.min(...xs) - 4, Math.min(...ys) - 4],
             [Math.max(...xs) + 4, Math.max(...ys) + 4],
           ],
-          selectedProvince ? 14 : MAP_CITY_MAX_SCALE,
+          selectedProvince ? MAP_PROVINCE_FOCUS_SCALE : MAP_CITY_MAX_SCALE,
         ),
         MAP_CITY_MAX_SCALE,
       );
@@ -941,7 +943,7 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
             </button>
             <button
               type="button"
-              onClick={() => mode === "cities" ? (selectedProvince?.bounds ? updateViewport(fitMapBounds(selectedProvince.bounds, 14), MAP_CITY_MAX_SCALE) : focusCountry(selectedCountry?.code, MAP_CITY_MAX_SCALE)) : mode === "provinces" ? focusCountry("CN", MAP_PROVINCE_MAX_SCALE) : resetViewport()}
+              onClick={() => mode === "cities" ? (selectedProvince?.bounds ? updateViewport(fitMapBounds(selectedProvince.bounds, MAP_PROVINCE_FOCUS_SCALE), MAP_CITY_MAX_SCALE) : focusCountry(selectedCountry?.code, MAP_CITY_MAX_SCALE)) : mode === "provinces" ? focusCountry("CN", MAP_PROVINCE_MAX_SCALE) : resetViewport()}
               disabled={
                 viewport.scale === 1 && viewport.x === 0 && viewport.y === 0
               }

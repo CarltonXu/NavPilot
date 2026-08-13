@@ -40,6 +40,10 @@ import DropdownMenu from "./components/DropdownMenu.jsx";
 import RecognitionResultDialog from "./components/RecognitionResultDialog.jsx";
 import ResourceOverview from "./components/ResourceOverview.jsx";
 import { browserPreference } from "./utils/browserPreference.js";
+import {
+  CATEGORY_SIDEBAR_COLLAPSED_WIDTH,
+  readCategorySidebarPreference,
+} from "./utils/categorySidebar.js";
 import AiWorkspace,{launchAiWorkspace}from"./components/AiWorkspace.jsx";
 import PublicInsights from"./components/PublicInsights.jsx";
 
@@ -262,6 +266,11 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     [showRecognitionResult, setShowRecognitionResult] = useState(false),
     [favoriteBusy, setFavoriteBusy] = useState(new Set()),
     [tagsOverflowing, setTagsOverflowing] = useState(false),
+    [categorySidebar, setCategorySidebar] = useState({
+      identityKey: null,
+      width: null,
+      collapsed: false,
+    }),
     [assistantRequest, setAssistantRequest] = useState(null);
   const spaceReady =
     identityKey !== null &&
@@ -289,6 +298,24 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     return () => window.removeEventListener("beforeunload", preventLeave);
   }, [recognizing]);
   const space = spaceReady ? selection.space : null;
+  useEffect(() => {
+    if (identityKey === null) return;
+    const preference = readCategorySidebarPreference(
+      localStorage.getItem(`navpilot_category_sidebar_v1:${identityKey}`),
+    );
+    setCategorySidebar({ identityKey, ...preference });
+  }, [identityKey]);
+  useEffect(() => {
+    if (identityKey === null || categorySidebar.identityKey !== identityKey)
+      return;
+    localStorage.setItem(
+      `navpilot_category_sidebar_v1:${identityKey}`,
+      JSON.stringify({
+        width: categorySidebar.width,
+        collapsed: categorySidebar.collapsed,
+      }),
+    );
+  }, [identityKey, categorySidebar]);
   useEffect(() => {
     if (identityKey === null) return;
     generation.current += 1;
@@ -965,7 +992,21 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     {canManage&&<><button className="icon-btn" disabled={recognizing} onClick={()=>setEditingItem({category_id:typeof activeCategory==="number"?activeCategory:null})}><Icon name="plus" size={16}/>{t("nav.add")}</button><button className="icon-btn" disabled={checkingAll||recognizing} onClick={checkAll}><Icon name="refresh" size={16}/>{t(checkingAll?"category.checkingAll":"nav.checkAll")}</button></>}
   </>;
   return (
-    <div className="app">
+    <div
+      className={`app ${categorySidebar.identityKey === identityKey && categorySidebar.collapsed ? "category-sidebar-collapsed" : ""}`}
+      style={
+        categorySidebar.identityKey === identityKey &&
+        (categorySidebar.collapsed || categorySidebar.width)
+          ? {
+              "--category-nav-width": `${
+                categorySidebar.collapsed
+                  ? CATEGORY_SIDEBAR_COLLAPSED_WIDTH
+                  : categorySidebar.width
+              }px`,
+            }
+          : undefined
+      }
+    >
       <header className="topbar">
         <div className="brand">
           <Brand branding={branding} />
@@ -1140,6 +1181,21 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
           selectionStates={canManage ? categorySelections : null}
           onToggleSelection={canManage ? toggleCategorySelection : null}
           selectionDisabled={moving || deleting || recognizing}
+          resizable
+          collapsed={categorySidebar.collapsed}
+          onCollapsedChange={(collapsed) =>
+            setCategorySidebar((current) => ({ ...current, collapsed }))
+          }
+          onWidthChange={(width) =>
+            setCategorySidebar((current) => ({
+              ...current,
+              width,
+              collapsed: false,
+            }))
+          }
+          onWidthReset={() =>
+            setCategorySidebar((current) => ({ ...current, width: null }))
+          }
         />
         <main className="content">
           {!ready ? (
