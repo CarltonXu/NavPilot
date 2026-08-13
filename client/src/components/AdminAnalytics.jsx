@@ -495,10 +495,14 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
   const { locale } = useI18n();
   const [active, setActive] = useState(null);
   const [mode, setMode] = useState("world");
+  const [selectedProvince, setSelectedProvince] = useState(null);
+  const [selectedCountry, setSelectedCountry] = useState(null);
   const [map, setMap] = useState({
     status: "loading",
     locations: [],
     cityLocations: [],
+    provinceLocations: [],
+    cityBoundaryGroups: {},
   });
   const [viewport, setViewportState] = useState({ scale: 1, x: 0, y: 0 }),
     [dragging, setDragging] = useState(false);
@@ -515,23 +519,70 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
     countries.map((item) => [item.name, Number(item.value || 0)]),
   );
   const cityValues = new Map(
-    cities
-      .filter((item) => item.countryCode === "CN")
-      .map((item) => [normalizeCityKey(item.name), item]),
+    cities.map((item) => [`${item.countryCode}:${normalizeCityKey(item.name)}`, item]),
   );
   const chinaCities = cities.filter((item) => item.countryCode === "CN");
   const mappedCities = map.cityLocations
     .map((location) => ({
       ...location,
-      data: cityValues.get(normalizeCityKey(location.name)),
+      data: cityValues.get(`${location.countryCode}:${normalizeCityKey(location.name)}`),
     }))
     .filter((location) => location.data);
+  const provinceValues = new Map();
+  for (const city of mappedCities) {
+    if (!city.provinceCode) continue;
+    const current = provinceValues.get(city.provinceCode) || {
+      value: 0,
+      uniqueVisitors: 0,
+      cities: 0,
+    };
+    current.value += Number(city.data.value || 0);
+    current.uniqueVisitors += Number(city.data.uniqueVisitors || 0);
+    current.cities += 1;
+    provinceValues.set(city.provinceCode, current);
+  }
+  const mappedProvinces = map.provinceLocations
+    .map((location) => ({ ...location, data: provinceValues.get(location.code) }))
+    .filter((location) => location.data);
+  const selectedCityBoundaries = selectedProvince
+    ? map.cityBoundaryGroups[selectedProvince.code] || []
+    : [];
+  const selectedMappedCities = selectedProvince
+    ? mappedCities.filter((city) => city.provinceCode === selectedProvince.code)
+    : selectedCountry ? mappedCities.filter((city) => city.countryCode === selectedCountry.code) : [];
+  const selectedBoundaryCodes = new Set(selectedCityBoundaries.map((city) => city.code).filter(Boolean));
+  const cityBoundaryValues = new Map(
+    selectedMappedCities.map((city) => [city.cityCode, { ...city.data, location: city }]),
+  );
   const max = Math.max(...countries.map((item) => Number(item.value || 0)), 1);
-  const cityMax = Math.max(
-    ...mappedCities.map((item) => Number(item.data.value || 0)),
+  const selectedCityMax = Math.max(
+    ...selectedMappedCities.map((item) => Number(item.data.value || 0)),
     1,
   );
-  const activeCityCoverage = chinaCityCoverage || cityCoverage;
+  const provinceMax = Math.max(...mappedProvinces.map((item) => Number(item.data.value || 0)), 1);
+  const selectedCountryVisits = Number(values.get(selectedCountry?.code) || 0),
+    selectedCountryKnownCities = selectedCountry
+      ? cities.filter((item) => item.countryCode === selectedCountry.code)
+        .reduce((total, item) => total + Number(item.value || 0), 0)
+      : 0,
+    selectedCountryCoverage = selectedCountry ? {
+      known:selectedCountryKnownCities,
+      unknown:Math.max(0, selectedCountryVisits - selectedCountryKnownCities),
+      rate:selectedCountryVisits ? Math.round((selectedCountryKnownCities / selectedCountryVisits) * 1000) / 10 : 0,
+    } : cityCoverage,
+    activeCityCoverage = selectedCountry?.code === "CN"
+      ? chinaCityCoverage || selectedCountryCoverage
+      : selectedCountryCoverage,
+    chinaVisits = Number(values.get("CN") || 0),
+    mappedProvinceVisits = mappedProvinces.reduce((total,item)=>total+Number(item.data.value||0),0),
+    provinceCoverage = {
+      known:mappedProvinceVisits,
+      unknown:Math.max(0,chinaVisits-mappedProvinceVisits),
+      rate:chinaVisits ? Math.round((mappedProvinceVisits/chinaVisits)*1000)/10 : 0,
+    },
+    selectedCityShareTotal = selectedProvince
+      ? Number(provinceValues.get(selectedProvince.code)?.value || 0)
+      : Number(activeCityCoverage?.known || 0);
   const names = useMemo(() => {
     try {
       return new Intl.DisplayNames([locale], { type: "region" });
@@ -584,14 +635,45 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
   };
   const enterChinaCities = () => {
     if (!chinaCities.length) return;
-    setMode("cities");
+    setMode("provinces");
+    setSelectedCountry({ code:"CN", name:label("CN", "China") });
+    setSelectedProvince(null);
     setActive(null);
     focusCountry("CN");
   };
+  const enterCountryCities = (code, fallback) => {
+    const countryCities = mappedCities.filter((city) => city.countryCode === code);
+    if (!countryCities.length) return focusCountry(code);
+    setMode("cities");
+    setSelectedCountry({ code, name:label(code, fallback) });
+    setSelectedProvince(null);
+    setActive(null);
+    focusCountry(code);
+  };
+  const enterProvinceCities = (location) => {
+    setMode("cities");
+    setSelectedProvince(location);
+    setActive(null);
+    if (location?.bounds) updateViewport(fitMapBounds(location.bounds, 7));
+  };
   const returnToWorld = () => {
     setMode("world");
+    setSelectedProvince(null);
+    setSelectedCountry(null);
     setActive(null);
     resetViewport();
+  };
+  const goBack = () => {
+    if (mode === "cities") {
+      if (!selectedProvince) return returnToWorld();
+      setMode("provinces");
+      setSelectedProvince(null);
+      setSelectedCountry({ code:"CN", name:label("CN", "China") });
+      setActive(null);
+      focusCountry("CN");
+      return;
+    }
+    returnToWorld();
   };
   const focusCity = (location) => {
     const scale = Math.max(6, viewportRef.current.scale);
@@ -603,9 +685,9 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
   };
   const focusData = () => {
     if (mode === "cities") {
-      if (!mappedCities.length) return focusCountry("CN");
-      const xs = mappedCities.map((item) => item.point[0]);
-      const ys = mappedCities.map((item) => item.point[1]);
+      if (!selectedMappedCities.length) return selectedProvince?.bounds && updateViewport(fitMapBounds(selectedProvince.bounds, 7));
+      const xs = selectedMappedCities.map((item) => item.point[0]);
+      const ys = selectedMappedCities.map((item) => item.point[1]);
       return updateViewport(
         fitMapBounds(
           [
@@ -615,6 +697,14 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
           6,
         ),
       );
+    }
+    if (mode === "provinces") {
+      if (!mappedProvinces.length) return focusCountry("CN");
+      const bounds = mappedProvinces.reduce(
+        (all, item) => [[Math.min(all[0][0], item.bounds[0][0]), Math.min(all[0][1], item.bounds[0][1])],[Math.max(all[1][0], item.bounds[1][0]), Math.max(all[1][1], item.bounds[1][1])]],
+        [[...mappedProvinces[0].bounds[0]], [...mappedProvinces[0].bounds[1]]],
+      );
+      return updateViewport(fitMapBounds(bounds, 6));
     }
     const selected = map.locations.filter(
       (item) => item.id && values.get(item.id),
@@ -645,9 +735,10 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
       import("topojson-client"),
       import("d3-geo"),
       import("country-code-lookup"),
-      import("../data/chinaCityIndex.js"),
+      import("../data/worldCityIndex.js"),
+      import("../data/chinaAdministrativeMap.js"),
     ])
-      .then(([atlas, topo, d3, lookupModule, cityModule]) => {
+      .then(([atlas, topo, d3, lookupModule, cityModule, administrativeModule]) => {
         if (cancelled) return;
         const topology = atlas.default || atlas;
         const lookup = lookupModule.default || lookupModule;
@@ -680,9 +771,23 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
         const cityLocations = (cityModule.default || [])
           .map((city) => ({ ...city, point:projection([city.longitude, city.latitude]) }))
           .filter((city) => Array.isArray(city.point));
-        setMap({ status: "ready", locations, cityLocations });
+        const administrative = administrativeModule.default,
+          featureLocations = (object) => topo.feature(administrative, object).features.map((feature) => ({
+            code:String(feature.properties?.code || ""),
+            name:feature.properties?.name || "",
+            path:path(feature),
+            bounds:path.bounds(feature),
+            centroid:path.centroid(feature),
+          })).filter((location) => location.path),
+          provinceLocations = featureLocations(administrative.objects.provinces),
+          cityBoundaryGroups = Object.fromEntries(
+            Object.entries(administrative.objects)
+              .filter(([key]) => key.startsWith("province_"))
+              .map(([key, object]) => [key.slice("province_".length), featureLocations(object)]),
+          );
+        setMap({ status: "ready", locations, cityLocations, provinceLocations, cityBoundaryGroups });
       })
-      .catch(() => !cancelled && setMap({ status: "error", locations: [] }));
+      .catch(() => !cancelled && setMap({ status: "error", locations: [], cityLocations: [], provinceLocations: [], cityBoundaryGroups: {} }));
     return () => {
       cancelled = true;
     };
@@ -764,25 +869,29 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
               ? locale === "en"
                 ? "Identified cities"
                 : "已识别城市"
+              : mode === "provinces"
+                ? locale === "en" ? "Identified provinces" : "已识别省份"
               : locale === "en"
                 ? "Identified regions"
                 : "已识别国家/地区"}
           </small>
-          <b>{mode === "cities" ? chinaCities.length : countries.length}</b>
+          <b>{mode === "cities" ? selectedMappedCities.length : mode === "provinces" ? mappedProvinces.length : countries.length}</b>
         </span>
         <span>
           <small>
             {mode === "cities"
               ? locale === "en" ? "City coverage" : "城市覆盖率"
+              : mode === "provinces"
+                ? locale === "en" ? "Province coverage" : "省份覆盖率"
               : locale === "en" ? "Region coverage" : "地区覆盖率"}
           </small>
-          <b>{mode === "cities" ? activeCityCoverage?.rate || 0 : coverage?.rate || 0}%</b>
+          <b>{mode === "cities" ? activeCityCoverage?.rate || 0 : mode === "provinces" ? provinceCoverage.rate : coverage?.rate || 0}%</b>
         </span>
         <span>
           <small>
             {locale === "en" ? "Unidentified visits" : "未识别访问"}
           </small>
-          <b>{Number((mode === "cities" ? activeCityCoverage : coverage)?.unknown || 0).toLocaleString(locale)}</b>
+          <b>{Number((mode === "cities" ? activeCityCoverage : mode === "provinces" ? provinceCoverage : coverage)?.unknown || 0).toLocaleString(locale)}</b>
         </span>
       </div>
       <div className="region-map-wrap" onMouseLeave={() => setActive(null)}>
@@ -795,10 +904,10 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
             role="toolbar"
             aria-label={locale === "en" ? "Map controls" : "地图工具栏"}
           >
-            {mode === "cities" && (
-              <button type="button" className="map-back" onClick={returnToWorld}>
+            {mode !== "world" && (
+              <button type="button" className="map-back" onClick={goBack}>
                 <Icon name="chevronLeft" size={13} />
-                <span>{locale === "en" ? "World" : "世界地图"}</span>
+                <span>{mode === "cities" && selectedProvince ? (locale === "en" ? "China" : "中国地图") : (locale === "en" ? "World" : "世界地图")}</span>
               </button>
             )}
             <button
@@ -819,7 +928,7 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
             </button>
             <button
               type="button"
-              onClick={() => mode === "cities" ? focusCountry("CN") : resetViewport()}
+              onClick={() => mode === "cities" ? (selectedProvince?.bounds ? updateViewport(fitMapBounds(selectedProvince.bounds, 7)) : focusCountry(selectedCountry?.code)) : mode === "provinces" ? focusCountry("CN") : resetViewport()}
               disabled={
                 viewport.scale === 1 && viewport.x === 0 && viewport.y === 0
               }
@@ -837,6 +946,8 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
               <span>
                 {mode === "cities"
                   ? locale === "en" ? "Fit cities" : "聚焦城市"
+                  : mode === "provinces"
+                    ? locale === "en" ? "Fit provinces" : "聚焦省份"
                   : locale === "en" ? "Fit data" : "聚焦数据"}
               </span>
             </button>
@@ -883,7 +994,7 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
                     <path
                       key={`${location.id || "area"}-${location.name}`}
                       d={location.path}
-                      className={`${mode === "cities" ? (code === "CN" ? "city-host" : "city-context") : value ? "has-data" : "no-data"} ${active?.key === code ? "active" : ""}`}
+                      className={`${mode !== "world" ? (code === (selectedCountry?.code || "CN") ? "city-host" : "city-context") : value ? "has-data" : "no-data"} ${active?.key === code ? "active" : ""}`}
                       style={{ "--region-intensity": intensity }}
                       tabIndex={interactive ? 0 : undefined}
                       role={interactive ? "button" : undefined}
@@ -899,6 +1010,8 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
                               event.stopPropagation();
                               enterChinaCities();
                             }
+                          : mode === "world" && value && mappedCities.some((city) => city.countryCode === code)
+                            ? (event) => { event.stopPropagation(); enterCountryCities(code, location.name); }
                           : undefined
                       }
                       onPointerEnter={
@@ -929,6 +1042,56 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
                     />
                   );
                 })}
+                {mode === "provinces" && map.provinceLocations.map((location) => {
+                  const value = Number(provinceValues.get(location.code)?.value || 0),
+                    intensity = value ? 0.3 + Math.sqrt(value / provinceMax) * 0.7 : 0,
+                    detail = {
+                      key:`province-${location.code}`,
+                      label:location.name,
+                      metrics:[[locale === "en" ? "Visits" : "访问次数", value.toLocaleString(locale)],[locale === "en" ? "Cities" : "已识别城市", Number(provinceValues.get(location.code)?.cities || 0).toLocaleString(locale)]],
+                    };
+                  return <path
+                    key={`province-${location.code}-${location.name}`}
+                    d={location.path}
+                    className={`province-area ${value ? "has-data" : "no-data"} ${active?.key === detail.key ? "active" : ""}`}
+                    style={{ "--region-intensity":intensity, "--city-color":cityMarkerColor(location.code) }}
+                    role={value ? "button" : undefined}
+                    tabIndex={value ? 0 : undefined}
+                    aria-label={value ? `${location.name} · ${value}` : undefined}
+                    onClick={value ? (event) => { event.stopPropagation(); enterProvinceCities(location); } : undefined}
+                    onPointerEnter={value && !dragging ? (event) => setActive(detailAtPointer(detail,event)) : undefined}
+                    onPointerMove={value && !dragging ? (event) => setActive(detailAtPointer(detail,event)) : undefined}
+                    onPointerLeave={value ? () => setActive(null) : undefined}
+                    onFocus={value ? (event) => setActive(detailAtPointer(detail,event)) : undefined}
+                    onBlur={value ? () => setActive(null) : undefined}
+                  />;
+                })}
+                {mode === "cities" && selectedCityBoundaries.map((location) => {
+                  const data = cityBoundaryValues.get(location.code),
+                    value = Number(data?.value || 0),
+                    intensity = value ? 0.34 + Math.sqrt(value / selectedCityMax) * 0.66 : 0,
+                    color = cityMarkerColor(location.code || location.name),
+                    detail = {
+                      key:`boundary-${location.code || location.name}`,
+                      label:location.name,
+                      metrics:[[locale === "en" ? "Visits" : "访问次数",value.toLocaleString(locale)],[locale === "en" ? "Visitors" : "独立访客",Number(data?.uniqueVisitors || 0).toLocaleString(locale)],[locale === "en" ? "Current-level share" : "当前层级占比",`${selectedCityShareTotal ? ((value / selectedCityShareTotal) * 100).toFixed(1) : 0}%`]],
+                    };
+                  return <path
+                    key={`boundary-${location.code || location.name}`}
+                    d={location.path}
+                    className={`city-boundary ${value ? "has-data" : "no-data"} ${active?.key === detail.key ? "active" : ""}`}
+                    style={{ "--region-intensity":intensity, "--city-color":color }}
+                    role={value ? "button" : undefined}
+                    tabIndex={value ? 0 : undefined}
+                    aria-label={value ? `${location.name} · ${value}` : undefined}
+                    onClick={value ? (event) => { event.stopPropagation(); data?.location && focusCity(data.location); } : undefined}
+                    onPointerEnter={value && !dragging ? (event) => setActive(detailAtPointer(detail,event)) : undefined}
+                    onPointerMove={value && !dragging ? (event) => setActive(detailAtPointer(detail,event)) : undefined}
+                    onPointerLeave={value ? () => setActive(null) : undefined}
+                    onFocus={value ? (event) => setActive(detailAtPointer(detail,event)) : undefined}
+                    onBlur={value ? () => setActive(null) : undefined}
+                  />;
+                })}
               </g>
               <g className="region-map-markers">
                 {mode === "world" && map.locations.map((location) => {
@@ -956,7 +1119,9 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
                       aria-label={`${label(code, location.name)} · ${value}`}
                       onClick={(event) => {
                         event.stopPropagation();
-                        focusCountry(code);
+                        mappedCities.some((city) => city.countryCode === code)
+                          ? enterCountryCities(code, location.name)
+                          : focusCountry(code);
                       }}
                       onPointerDown={(event) => event.stopPropagation()}
                       onPointerEnter={(event) =>
@@ -973,26 +1138,28 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
                       onKeyDown={(event) => {
                         if (event.key === "Enter" || event.key === " ") {
                           event.preventDefault();
-                          focusCountry(code);
+                          mappedCities.some((city) => city.countryCode === code)
+                            ? enterCountryCities(code, location.name)
+                            : focusCountry(code);
                         }
                       }}
                     />
                   );
                 })}
-                {mode === "cities" && mappedCities.map((location) => {
+                {mode === "cities" && selectedMappedCities.filter((location) => !location.cityCode || !selectedBoundaryCodes.has(location.cityCode)).map((location) => {
                   const value = Number(location.data.value || 0);
                   const cx = viewport.x + location.point[0] * viewport.scale,
                     cy = viewport.y + location.point[1] * viewport.scale;
-                  const radius = mapMarkerRadius(value, cityMax) + 1,
+                  const radius = mapMarkerRadius(value, selectedCityMax) + 1,
                     color = cityMarkerColor(location.name),
-                    intensity = 0.7 + Math.sqrt(value / cityMax) * 0.3;
+                    intensity = 0.7 + Math.sqrt(value / selectedCityMax) * 0.3;
                   const detail = {
                     key:`city-${location.name}`,
                     label:locale === "en" ? location.name : location.label || location.name,
                     metrics:[
                       [locale === "en" ? "Visits" : "访问次数", value.toLocaleString(locale)],
                       [locale === "en" ? "Visitors" : "独立访客", Number(location.data.uniqueVisitors || 0).toLocaleString(locale)],
-                      [locale === "en" ? "City share" : "城市访问占比", `${activeCityCoverage?.known ? ((value / activeCityCoverage.known) * 100).toFixed(1) : 0}%`],
+                      [locale === "en" ? "Current-level share" : "当前层级占比", `${selectedCityShareTotal ? ((value / selectedCityShareTotal) * 100).toFixed(1) : 0}%`],
                     ],
                   };
                   return (
@@ -1046,7 +1213,7 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
               </span>
             </div>
           )}
-          <div className={`region-map-scale ${mode === "cities" ? "city-scale" : ""}`}>
+          <div className={`region-map-scale ${mode !== "world" ? "city-scale" : ""}`}>
             <span>{locale === "en" ? "Fewer" : "较少"}</span>
             <i />
             <i />
@@ -1060,41 +1227,48 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
             <span>
               {mode === "cities"
                 ? locale === "en" ? "City" : "城市"
+                : mode === "provinces"
+                  ? locale === "en" ? "Province" : "省份"
                 : locale === "en" ? "Country / region" : "国家 / 地区"}
             </span>
             <b>{locale === "en" ? "Visits" : "访问"}</b>
           </header>
           {mode === "cities" ? (
-            chinaCities.length ? chinaCities.slice(0, 10).map((item) => {
-              const location = map.cityLocations.find(
-                (city) => normalizeCityKey(city.name) === normalizeCityKey(item.name),
-              );
+            selectedMappedCities.length ? selectedMappedCities.slice().sort((a,b)=>Number(b.data.value||0)-Number(a.data.value||0)).slice(0, 10).map((location) => {
+              const item = location.data;
               return (
                 <button
                   type="button"
-                  key={`${item.countryCode}-${item.name}`}
-                  disabled={!location}
-                  onClick={() => location && focusCity(location)}
+                  key={`${item.countryCode}-${location.name}`}
+                  onClick={() => focusCity(location)}
                   onPointerEnter={(event) => setActive(detailAtPointer({
-                    key:`city-${item.name}`,
-                    label:locale === "en" ? item.name : location?.label || item.name,
+                    key:`city-${location.name}`,
+                    label:locale === "en" ? location.name : location.label || location.name,
                     metrics:[[locale === "en" ? "Visits" : "访问次数", Number(item.value).toLocaleString(locale)],[locale === "en" ? "Visitors" : "独立访客", Number(item.uniqueVisitors || 0).toLocaleString(locale)]],
                   }, event))}
                   onPointerLeave={() => setActive(null)}
                 >
-                  <i style={{ "--city-color": cityMarkerColor(item.name) }} />
-                  <span><strong>{locale === "en" ? item.name : location?.label || item.name}</strong><small>{item.name}</small></span>
+                  <i style={{ "--city-color": cityMarkerColor(location.cityCode || location.name) }} />
+                  <span><strong>{locale === "en" ? location.name : location.label || location.name}</strong><small>{location.name}</small></span>
                   <b>{Number(item.value).toLocaleString(locale)}</b>
                 </button>
               );
-            }) : <p>{locale === "en" ? "City data will accumulate from new visits." : "城市数据将从新访问开始累计。"}</p>
+            }) : <p>{locale === "en" ? "No city data for this province yet." : "该省份暂无城市访问数据。"}</p>
+          ) : mode === "provinces" ? (
+            mappedProvinces.length ? mappedProvinces.slice().sort((a,b)=>Number(b.data.value||0)-Number(a.data.value||0)).slice(0,10).map((location) => (
+              <button type="button" key={location.code} onClick={() => enterProvinceCities(location)}>
+                <i style={{ "--city-color":cityMarkerColor(location.code) }} />
+                <span><strong>{location.name}</strong><small>{location.data.cities} {locale === "en" ? "cities" : "个城市"}</small></span>
+                <b>{Number(location.data.value).toLocaleString(locale)}</b>
+              </button>
+            )) : <p>{locale === "en" ? "Province data will accumulate from new visits." : "省份数据将从新访问开始累计。"}</p>
           ) : countries.length ? (
             countries.slice(0, 6).map((item) => (
               <button
                 type="button"
                 key={item.name}
                 className={active?.key === item.name ? "active" : ""}
-                onClick={() => item.name === "CN" && chinaCities.length ? enterChinaCities() : focusCountry(item.name)}
+                  onClick={() => item.name === "CN" && chinaCities.length ? enterChinaCities() : mappedCities.some((city) => city.countryCode === item.name) ? enterCountryCities(item.name) : focusCountry(item.name)}
                 onPointerEnter={(event) =>
                   setActive(detailAtPointer(select(item), event))
                 }

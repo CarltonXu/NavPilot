@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { feature } from "topojson-client";
+import chinaAdministrativeMap from "../data/chinaAdministrativeMap.js";
+import worldCityIndex from "../data/worldCityIndex.js";
 import {
   ADMIN_TREND_TICK_POSITIONS,
   adminTrendPointY,
@@ -86,6 +89,32 @@ describe("analytics region labels", () => {
   it("keeps city hotspot colors stable and differentiates city markers", () => {
     expect(cityMarkerColor("Jinan")).toBe(cityMarkerColor("Jinan "));
     expect(cityMarkerColor("Jinan")).not.toBe(cityMarkerColor("Beijing"));
+  });
+
+  it("maps GeoIP city names through province and prefecture boundaries", () => {
+    const zibo = worldCityIndex.find((city) => city.countryCode === "CN" && city.name === "Zibo");
+    expect(zibo).toMatchObject({
+      label: "淄博市",
+      provinceCode: "37",
+      provinceLabel: "山东省",
+      cityCode: "370300",
+    });
+    const provinces = feature(
+      chinaAdministrativeMap,
+      chinaAdministrativeMap.objects.provinces,
+    ).features;
+    const shandongCities = feature(
+      chinaAdministrativeMap,
+      chinaAdministrativeMap.objects.province_37,
+    ).features;
+    const beijing = feature(
+      chinaAdministrativeMap,
+      chinaAdministrativeMap.objects.province_11,
+    ).features;
+    expect(provinces.find((area) => area.properties.code === "37")?.properties.name).toBe("山东省");
+    expect(shandongCities.find((area) => area.properties.code === "370300")?.properties.name).toBe("淄博市");
+    expect(beijing).toHaveLength(1);
+    expect(beijing[0].properties).toMatchObject({ code: "110000", name: "北京市" });
   });
 
   it("aligns trend points and zero values to the same plot grid", () => {
