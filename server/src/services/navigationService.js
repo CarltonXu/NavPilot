@@ -126,6 +126,16 @@ function assertVersion(value, expectedVersion) {
   )
     throw domainError("ENTITY_STALE", "数据已发生变化，请刷新后重试", 409);
 }
+const CATEGORY_ICON_NAMES = new Set([
+  "folder","grid","star","bookmark","tag","link","globe","compass","home","layers",
+  "building","briefcase","users","calendar","mail","message","chart","target","shield","lock",
+  "code","terminal","database","server","cloud","network","cpu","monitor","mobile","tools",
+  "docs","book","image","video","music","download","upload","archive","package","lab",
+]);
+function normalizeCategoryIcon(value) {
+  const icon=String(value||"icon:folder").trim();
+  return icon.startsWith("icon:")&&CATEGORY_ICON_NAMES.has(icon.slice(5))?icon:"icon:folder";
+}
 function compactItemOrder(db, current, categoryId) {
   const rows = db
     .prepare(
@@ -271,7 +281,7 @@ function createNavigationService(db = defaultDb) {
           )
           .run(
             name,
-            String(input.icon || "icon:folder").slice(0, 80),
+            normalizeCategoryIcon(input.icon),
             current.scope,
             current.ownerId,
             parent?.id ?? null,
@@ -298,7 +308,7 @@ function createNavigationService(db = defaultDb) {
     const icon =
       patch.icon === undefined
         ? beforeValue.icon
-        : String(patch.icon || "icon:folder").slice(0, 80);
+        : normalizeCategoryIcon(patch.icon);
     const hasParent =
       Object.prototype.hasOwnProperty.call(patch, "parent_id") ||
       Object.prototype.hasOwnProperty.call(patch, "parentId");
@@ -575,6 +585,39 @@ function createNavigationService(db = defaultDb) {
       changedFields: ["orderedIds"],
     };
   }
+  function moveCategory(current, id, input = {}) {
+    const beforeValue = categoryWithPath(current, id);
+    assertVersion(beforeValue, input.expectedVersion);
+    const parent = validateParent(
+      current,
+      beforeValue.id,
+      input.parentId ?? input.parent_id ?? null,
+    );
+    const nextParentId = parent?.id ?? null;
+    const duplicate = db.prepare(
+      "SELECT id FROM categories WHERE scope=? AND owner_id IS ? AND parent_id IS ? AND name=? COLLATE NOCASE AND id<>?",
+    ).get(current.scope,current.ownerId,nextParentId,beforeValue.name,beforeValue.id);
+    if (duplicate)
+      throw domainError("CATEGORY_SIBLING_CONFLICT", "同一级下已存在同名分类", 409);
+    const destination = db.prepare(
+      "SELECT id FROM categories WHERE scope=? AND owner_id IS ? AND parent_id IS ? AND id<>? ORDER BY sort_order,id",
+    ).all(current.scope,current.ownerId,nextParentId,beforeValue.id).map(row=>row.id);
+    const requestedIndex=Number(input.index),index=Number.isInteger(requestedIndex)
+      ? Math.max(0,Math.min(requestedIndex,destination.length))
+      : destination.length;
+    destination.splice(index,0,beforeValue.id);
+    db.prepare(
+      "UPDATE categories SET parent_id=?,sort_order=?,version=version+1,updated_at=datetime('now') WHERE id=? AND scope=? AND owner_id IS ?",
+    ).run(nextParentId,index,beforeValue.id,current.scope,current.ownerId);
+    if ((beforeValue.parent_id??null)!==nextParentId)
+      compactCategoryOrder(current,beforeValue.parent_id??null);
+    const update=db.prepare(
+      "UPDATE categories SET sort_order=?,version=version+1,updated_at=datetime('now') WHERE id=? AND scope=? AND owner_id IS ? AND parent_id IS ?",
+    );
+    destination.forEach((categoryId,sortOrder)=>update.run(sortOrder,categoryId,current.scope,current.ownerId,nextParentId));
+    const value=categoryWithPath(current,beforeValue.id),before=categorySnapshot(beforeValue),after=categorySnapshot(value);
+    return { value, before, after, changedFields:changedFields(before,after), moved:true };
+  }
   function reorderItems(current, categoryId, orderedIds) {
     const idValue = categoryId === null ? null : Number(categoryId);
     if (idValue !== null) getCategory(db, current, idValue);
@@ -658,6 +701,7 @@ function createNavigationService(db = defaultDb) {
     deleteCategory,
     reorderItems,
     reorderCategories,
+    moveCategory,
     itemSnapshot,
     categorySnapshot,
   };

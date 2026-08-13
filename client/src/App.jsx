@@ -603,6 +603,31 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     });
     await load();
   }
+  async function changeCategoryIcon(category, icon) {
+    if (!canManage) return;
+    await api.updateCategory(category.id, {
+      icon,
+      expectedVersion: category.version,
+    });
+    await load();
+  }
+  async function moveCategory(categoryId, parentId, index) {
+    if (!canManage || recognizing) return;
+    const category=categories.find(value=>value.id===Number(categoryId));
+    if (!category) return;
+    setError("");
+    try {
+      await api.moveCategory(category.id, {
+        parentId,
+        index,
+        expectedVersion: category.version,
+      });
+      toastMessage(t("category.moved", { name: category.name }));
+      await load();
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }
   function toggleSelected(id) {
     if (recognizing) return;
     setSelectedIds((current) => {
@@ -853,11 +878,11 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
   }
   function categoryLabel(key) {
     if (key === "uncategorized")
-      return { name: t("category.uncategorized"), icon: "📎" };
+      return { name: t("category.uncategorized"), icon: "icon:archive" };
     return (
       categories.find((category) => category.id === key) || {
         name: t("category.uncategorized"),
-        icon: "📎",
+        icon: "icon:archive",
       }
     );
   }
@@ -1176,8 +1201,10 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
           manageable={canManage && !recognizing}
           onCreate={createCategory}
           onRename={renameCategory}
+          onChangeIcon={changeCategoryIcon}
           onDelete={requestDelete}
           onDropItems={dropItems}
+          onMoveCategory={moveCategory}
           selectionStates={canManage ? categorySelections : null}
           onToggleSelection={canManage ? toggleCategorySelection : null}
           selectionDisabled={moving || deleting || recognizing}

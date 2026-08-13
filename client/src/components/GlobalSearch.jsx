@@ -236,6 +236,11 @@ export default function GlobalSearch() {
                   </span>
                   <span className="global-result-copy">
                     <strong title={item.name}>{item.name}</strong>
+                    {item.description && (
+                      <p className="global-result-description" title={item.description}>
+                        {item.description}
+                      </p>
+                    )}
                     <span
                       className="global-result-path"
                       title={item.categoryPath || item.categoryName || c.uncategorized}

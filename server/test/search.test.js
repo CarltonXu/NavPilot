@@ -25,6 +25,7 @@ test("global search returns and searches complete category paths", async (t) => 
   const publicItem = navigation.createItem(realm("public"), {
     name: "Internal Repository",
     url: "https://search-path-public.example",
+    description: "Internal source code and delivery platform",
     category_id: publicLeaf.id,
   }).value;
 
@@ -65,6 +66,7 @@ test("global search returns and searches complete category paths", async (t) => 
   let result = results.find((item) => item.id === publicItem.id);
   assert.equal(result.categoryName, "Engineering");
   assert.equal(result.categoryPath, "SearchPathCompany / Engineering");
+  assert.equal(result.description, "Internal source code and delivery platform");
   assert.match(result.searchEventId, /^search-[a-f0-9-]{36}$/);
 
   results = await search("SearchPathPrivate", session.rawToken);

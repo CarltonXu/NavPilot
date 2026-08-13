@@ -584,6 +584,26 @@ function migrateCurrentSchema(db) {
       db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(15)').run();
     })();
   }
+  if (!applied.has(16)) {
+    db.transaction(() => {
+      db.exec(`
+        UPDATE categories SET icon=CASE icon
+          WHEN '📁' THEN 'icon:folder'
+          WHEN '🗂️' THEN 'icon:layers'
+          WHEN '🧭' THEN 'icon:compass'
+          WHEN '📚' THEN 'icon:book'
+          WHEN '💻' THEN 'icon:code'
+          WHEN '🛠️' THEN 'icon:tools'
+          WHEN '🌐' THEN 'icon:globe'
+          WHEN '🏢' THEN 'icon:building'
+          WHEN '🔒' THEN 'icon:lock'
+          WHEN '⭐' THEN 'icon:star'
+          ELSE 'icon:folder' END
+        WHERE icon IS NULL OR trim(icon)='' OR icon NOT LIKE 'icon:%';
+      `);
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(16)').run();
+    })();
+  }
 }
 
 function createDatabase(filename = DEFAULT_DB_PATH) {

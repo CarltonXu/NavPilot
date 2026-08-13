@@ -225,6 +225,10 @@ test("category trees enforce depth and preserve items on subtree delete", () => 
     service = createNavigationService(db),
     current = realm("personal", owner);
   const root = service.createCategory(current, { name: "研发" }).value;
+  const svgCategory = service.createCategory(current, { name: "SVG 图标", icon:"icon:database" }).value;
+  assert.equal(svgCategory.icon,"icon:database");
+  const emojiCategory = service.createCategory(current, { name: "Emoji 图标", icon:"📁" }).value;
+  assert.equal(emojiCategory.icon,"icon:folder");
   const child = service.createCategory(current, {
     name: "后端",
     parent_id: root.id,
@@ -243,6 +247,26 @@ test("category trees enforce depth and preserve items on subtree delete", () => 
     () => service.updateCategory(current, root.id, { parent_id: child.id }),
     (error) => error.code === "CATEGORY_CYCLE",
   );
+  const peer = service.createCategory(current, { name:"前端", parent_id:root.id }).value;
+  const movedPeer = service.moveCategory(current,peer.id,{parentId:root.id,index:0,expectedVersion:peer.version}).value;
+  assert.equal(movedPeer.parent_id,root.id);
+  assert.deepEqual(service.listCategories(current).filter(category=>category.parent_id===root.id).sort((a,b)=>a.sort_order-b.sort_order).map(category=>category.id),[peer.id,child.id]);
+  const promoted = service.moveCategory(current,peer.id,{parentId:null,index:0,expectedVersion:movedPeer.version}).value;
+  assert.equal(promoted.parent_id,null);
+  assert.equal(promoted.depth,1);
+  const destinationRoot=service.createCategory(current,{name:"目标一级"}).value;
+  const destinationChild=service.createCategory(current,{name:"目标二级",parent_id:destinationRoot.id}).value;
+  const freeRoot=service.createCategory(current,{name:"自由一级"}).value;
+  const nestedRoot=service.moveCategory(current,freeRoot.id,{parentId:destinationRoot.id,index:1,expectedVersion:freeRoot.version}).value;
+  assert.equal(nestedRoot.parent_id,destinationRoot.id);
+  assert.equal(nestedRoot.depth,2);
+  const freeLeaf=service.createCategory(current,{name:"自由二级",parent_id:root.id}).value;
+  const nestedLeaf=service.moveCategory(current,freeLeaf.id,{parentId:destinationChild.id,index:0,expectedVersion:freeLeaf.version}).value;
+  assert.equal(nestedLeaf.parent_id,destinationChild.id);
+  assert.equal(nestedLeaf.depth,3);
+  const crossParent=service.moveCategory(current,nestedLeaf.id,{parentId:destinationRoot.id,index:0,expectedVersion:nestedLeaf.version}).value;
+  assert.equal(crossParent.parent_id,destinationRoot.id);
+  assert.equal(crossParent.depth,2);
   const otherRoot = service.createCategory(current, { name: "办公" }).value;
   assert.doesNotThrow(() =>
     service.createCategory(current, { name: "监控", parent_id: otherRoot.id }),
@@ -269,7 +293,7 @@ test("category trees enforce depth and preserve items on subtree delete", () => 
     (error) => error.code === "CATEGORY_DELETE_IMPACT_STALE",
   );
   const deleted = service.deleteCategory(current, root.id, {
-    expectedVersion: root.version,
+    expectedVersion: impact.category.version,
     impactHash: impact.impactHash,
     confirmSubtree: true,
   });

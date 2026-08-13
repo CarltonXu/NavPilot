@@ -343,7 +343,7 @@ function importNormalized(
           .prepare(
             "INSERT INTO categories(name,icon,scope,owner_id,parent_id,sort_order,version,updated_at) VALUES(?,?,?,?,?,?,1,datetime('now'))",
           )
-          .run(row.name, row.icon, current.scope, current.ownerId, parent, max + 1).lastInsertRowid,
+          .run(row.name, String(row.icon||'').startsWith('icon:')?row.icon:'icon:folder', current.scope, current.ownerId, parent, max + 1).lastInsertRowid,
       );
       categoryMap.set(key, id);
       return id;
