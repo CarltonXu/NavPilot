@@ -86,6 +86,25 @@ export function mapMarkerRadius(value, max) {
   return 4.5 + Math.sqrt(ratio) * 5.5;
 }
 
+const CITY_MARKER_COLORS = [
+  "#3b82f6",
+  "#8b5cf6",
+  "#ec4899",
+  "#f97316",
+  "#14b8a6",
+  "#22c55e",
+  "#eab308",
+  "#06b6d4",
+];
+
+export function cityMarkerColor(value) {
+  const key = normalizeCityKey(value);
+  let hash = 0;
+  for (let index = 0; index < key.length; index += 1)
+    hash = (hash * 31 + key.charCodeAt(index)) >>> 0;
+  return CITY_MARKER_COLORS[hash % CITY_MARKER_COLORS.length];
+}
+
 export function normalizeCityKey(value) {
   return String(value || "")
     .normalize("NFKD")
@@ -855,6 +874,7 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
                   const code = String(location.id || "").toUpperCase(),
                     value = code ? values.get(code) || 0 : 0,
                     item = { name: code, value };
+                  const interactive = mode === "world" && Boolean(value);
                   const intensity = value
                     ? 0.28 + Math.sqrt(value / max) * 0.72
                     : 0;
@@ -863,18 +883,18 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
                     <path
                       key={`${location.id || "area"}-${location.name}`}
                       d={location.path}
-                      className={`${value ? "has-data" : "no-data"} ${active?.key === code ? "active" : ""}`}
+                      className={`${mode === "cities" ? (code === "CN" ? "city-host" : "city-context") : value ? "has-data" : "no-data"} ${active?.key === code ? "active" : ""}`}
                       style={{ "--region-intensity": intensity }}
-                      tabIndex={value ? 0 : undefined}
-                      role={value ? "button" : undefined}
-                      aria-hidden={value ? undefined : true}
+                      tabIndex={interactive ? 0 : undefined}
+                      role={interactive ? "button" : undefined}
+                      aria-hidden={interactive ? undefined : true}
                       aria-label={
-                        value
+                        interactive
                           ? `${label(code, location.name)} · ${value}`
                           : undefined
                       }
                       onClick={
-                        code === "CN" && value && chinaCities.length
+                        mode === "world" && code === "CN" && value && chinaCities.length
                           ? (event) => {
                               event.stopPropagation();
                               enterChinaCities();
@@ -882,24 +902,24 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
                           : undefined
                       }
                       onPointerEnter={
-                        value && !dragging
+                        interactive && !dragging
                           ? (event) => setActive(detailAtPointer(detail, event))
                           : undefined
                       }
                       onPointerMove={
-                        value && !dragging
+                        interactive && !dragging
                           ? (event) => setActive(detailAtPointer(detail, event))
                           : undefined
                       }
-                      onPointerLeave={value ? () => setActive(null) : undefined}
+                      onPointerLeave={interactive ? () => setActive(null) : undefined}
                       onFocus={
-                        value
+                        interactive
                           ? (event) => setActive(detailAtPointer(detail, event))
                           : undefined
                       }
-                      onBlur={value ? () => setActive(null) : undefined}
+                      onBlur={interactive ? () => setActive(null) : undefined}
                       onDoubleClick={
-                        value
+                        interactive
                           ? (event) => {
                               event.stopPropagation();
                               focusCountry(code);
@@ -963,6 +983,9 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
                   const value = Number(location.data.value || 0);
                   const cx = viewport.x + location.point[0] * viewport.scale,
                     cy = viewport.y + location.point[1] * viewport.scale;
+                  const radius = mapMarkerRadius(value, cityMax) + 1,
+                    color = cityMarkerColor(location.name),
+                    intensity = 0.7 + Math.sqrt(value / cityMax) * 0.3;
                   const detail = {
                     key:`city-${location.name}`,
                     label:locale === "en" ? location.name : location.label || location.name,
@@ -973,23 +996,35 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
                     ],
                   };
                   return (
-                    <circle
+                    <g
                       key={`city-${location.name}`}
-                      cx={cx}
-                      cy={cy}
-                      r={mapMarkerRadius(value, cityMax) + 1}
-                      className={`city-marker ${active?.key === detail.key ? "active" : ""}`}
-                      role="button"
-                      tabIndex="0"
-                      aria-label={`${detail.label} · ${value}`}
-                      onClick={(event) => { event.stopPropagation(); focusCity(location); }}
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onPointerEnter={(event) => !dragging && setActive(detailAtPointer(detail, event))}
-                      onPointerMove={(event) => !dragging && setActive(detailAtPointer(detail, event))}
-                      onPointerLeave={() => setActive(null)}
-                      onFocus={(event) => setActive(detailAtPointer(detail, event))}
-                      onBlur={() => setActive(null)}
-                    />
+                      className={`city-hotspot ${active?.key === detail.key ? "active" : ""}`}
+                      style={{ "--city-color": color, "--city-intensity": intensity }}
+                    >
+                      <circle
+                        cx={cx}
+                        cy={cy}
+                        r={radius + 3.5}
+                        className="city-marker-halo"
+                        aria-hidden="true"
+                      />
+                      <circle
+                        cx={cx}
+                        cy={cy}
+                        r={radius}
+                        className="city-marker"
+                        role="button"
+                        tabIndex="0"
+                        aria-label={`${detail.label} · ${value}`}
+                        onClick={(event) => { event.stopPropagation(); focusCity(location); }}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onPointerEnter={(event) => !dragging && setActive(detailAtPointer(detail, event))}
+                        onPointerMove={(event) => !dragging && setActive(detailAtPointer(detail, event))}
+                        onPointerLeave={() => setActive(null)}
+                        onFocus={(event) => setActive(detailAtPointer(detail, event))}
+                        onBlur={() => setActive(null)}
+                      />
+                    </g>
                   );
                 })}
               </g>
@@ -1011,7 +1046,7 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
               </span>
             </div>
           )}
-          <div className="region-map-scale">
+          <div className={`region-map-scale ${mode === "cities" ? "city-scale" : ""}`}>
             <span>{locale === "en" ? "Fewer" : "较少"}</span>
             <i />
             <i />
@@ -1047,7 +1082,7 @@ function RegionMap({ data, cities = [], networks, coverage, cityCoverage, chinaC
                   }, event))}
                   onPointerLeave={() => setActive(null)}
                 >
-                  <i />
+                  <i style={{ "--city-color": cityMarkerColor(item.name) }} />
                   <span><strong>{locale === "en" ? item.name : location?.label || item.name}</strong><small>{item.name}</small></span>
                   <b>{Number(item.value).toLocaleString(locale)}</b>
                 </button>

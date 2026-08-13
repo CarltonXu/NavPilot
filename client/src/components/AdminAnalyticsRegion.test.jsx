@@ -3,6 +3,7 @@ import {
   ADMIN_TREND_TICK_POSITIONS,
   adminTrendPointY,
   clampMapViewport,
+  cityMarkerColor,
   fitMapBounds,
   isSmallMapLocation,
   localizedRegionName,
@@ -80,6 +81,11 @@ describe("analytics region labels", () => {
   it("normalizes city database names for the city-center index", () => {
     expect(normalizeCityKey("Xi’an")).toBe("xian");
     expect(normalizeCityKey("Jinan ")).toBe("jinan");
+  });
+
+  it("keeps city hotspot colors stable and differentiates city markers", () => {
+    expect(cityMarkerColor("Jinan")).toBe(cityMarkerColor("Jinan "));
+    expect(cityMarkerColor("Jinan")).not.toBe(cityMarkerColor("Beijing"));
   });
 
   it("aligns trend points and zero values to the same plot grid", () => {
