@@ -62,6 +62,25 @@ describe('AI Workspace',()=>{
     expect(document.querySelector('.ai-stream-caret')).toBeNull();
   });
 
+  it('preserves a partial answer and can regenerate the original prompt',async()=>{
+    api.discussAiStream
+      .mockImplementationOnce(async(_scope,_text,_locale,_conversationId,handlers)=>{
+        handlers.onMeta({conversationId:'conversation-partial'});handlers.onDelta('已经生成的部分回答');
+        throw Object.assign(new Error('AI 数据流中断'),{code:'AI_STREAM_INTERRUPTED',partial:true,retryable:true});
+      })
+      .mockImplementationOnce(async(_scope,_text,_locale,_conversationId,handlers)=>{
+        handlers.onDelta('完整回答');return{conversationId:'conversation-partial',model:'test-model'};
+      });
+    render(<LocaleProvider><AiWorkspace theme="dark" onThemeChange={()=>{}} branding={{siteName:'NavPilot'}} aiPersonalEnabled/></LocaleProvider>);
+    fireEvent.change(screen.getByPlaceholderText('描述你想分析、整理或创建的内容。讨论阶段不会修改资源。'),{target:{value:'请生成资源建议'}});
+    fireEvent.click(screen.getByRole('button',{name:/发送讨论/}));
+    await screen.findByText('已经生成的部分回答');
+    expect(screen.getByText('回答未完整结束，已保留当前内容。')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button',{name:'重新生成'}));
+    await screen.findByText('完整回答');
+    expect(api.discussAiStream.mock.calls[1][1]).toBe('请生成资源建议');
+  });
+
   it('runs read-only natural-language commands and renders real query tables',async()=>{
     render(<LocaleProvider><AiWorkspace theme="dark" onThemeChange={()=>{}} branding={{siteName:'NavPilot'}} aiPersonalEnabled/></LocaleProvider>);
     fireEvent.click(screen.getByRole('tab',{name:'指令模式'}));

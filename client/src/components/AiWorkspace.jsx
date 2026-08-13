@@ -55,6 +55,8 @@ const copy = {
     changed: "方案已执行，返回导航页面即可查看最新资源。",
     stop: "停止生成",
     stopped: "生成已停止",
+    partial: "回答未完整结束，已保留当前内容。",
+    retry: "重新生成",
   },
   en: {
     title: "AI Workspace",
@@ -99,6 +101,8 @@ const copy = {
     changed: "The plan was executed. Return to the portal to see the latest resources.",
     stop: "Stop",
     stopped: "Generation stopped",
+    partial: "The answer ended early. The generated content has been preserved.",
+    retry: "Regenerate",
   },
 };
 
@@ -252,8 +256,8 @@ export default function AiWorkspace({
     setNotice("");
   }
 
-  async function sendDiscussion() {
-    const text = draft.trim();
+  async function sendDiscussion(textOverride = null) {
+    const text = typeof textOverride === "string" ? textOverride.trim() : draft.trim();
     if (!text || !canDiscuss) return;
     setBusy(true);
     setError("");
@@ -293,15 +297,16 @@ export default function AiWorkspace({
       setNotice(c.ready);
       refreshHistory();
     } catch (value) {
-      if(renderFrame)cancelAnimationFrame(renderFrame);
+      finishStreamRender();
       if(value?.name==='AbortError'){
         setMessages(current=>current.map(message=>message.localId===streamId?{...message,streaming:false,cancelled:true}:message));
         setNotice(c.stopped);
         refreshHistory();
         return;
       }
-      setMessages(current=>current.map(message=>message.localId===streamId?{...message,streaming:false,failed:true}:message));
-      setError(errorMessage(value));
+      const partial=Boolean(value?.partial);
+      setMessages(current=>current.map(message=>message.localId===streamId?{...message,streaming:false,failed:!partial,partial,retryText:text,run:value?.run||message.run}:message));
+      if(partial){setNotice("");refreshHistory();}else setError(errorMessage(value));
     } finally {
       if(streamController.current===controller){streamController.current=null;setBusy(false);}
     }
@@ -434,10 +439,11 @@ export default function AiWorkspace({
                         <div>{c.starters.map((text) => <button key={text} onClick={() => setDraft(text)}>{text}<Icon name="chevronRight" size={13} /></button>)}</div>
                       </div>
                     ) : messages.map((message, index) => (
-                      <article className={`${message.role} ${message.streaming ? "streaming" : ""} ${message.failed ? "failed" : ""}`} key={`${message.createdAt || index}-${index}`}>
+                      <article className={`${message.role} ${message.streaming ? "streaming" : ""} ${message.failed ? "failed" : ""} ${(message.partial||message.metadata?.partial) ? "partial" : ""}`} key={`${message.createdAt || index}-${index}`}>
                         <span>{message.role === "user" ? (locale === "en" ? "You" : "你") : "AI"}</span>
                         <div>{message.content}{message.streaming&&<i className="ai-stream-caret" aria-label={locale==='en'?'Generating':'正在生成'}/>}</div>
                         {message.cancelled&&<small>{c.stopped}</small>}
+                        {(message.partial||message.metadata?.partial)&&<small className="ai-partial-answer"><span>{c.partial}</span><button type="button" disabled={busy} onClick={()=>sendDiscussion(message.retryText||messages[index-1]?.content||"")}>{c.retry}</button></small>}
                         {message.planId && <small>{locale === "en" ? "Execution plan" : "执行方案"} · {message.planId.slice(0, 8)}</small>}
                         {(message.run||message.metadata?.usage)&&<AiRunUsage run={message.run||message.metadata.usage} locale={locale} live={message.streaming} compact/>}
                       </article>

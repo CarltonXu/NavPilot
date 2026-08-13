@@ -4,7 +4,7 @@ process.env.NAVPILOT_DB_PATH = ":memory:";
 const db = require("../src/db");
 const axios = require('axios');
 const { Readable } = require('node:stream');
-const { extractJson, normalizeEnvelope, parseCommands, parsePlan, parseInstruction, requestCommandsWithConfig, requestInstructionWithConfig, requestDiscussionWithConfig, requestDiscussionStreamWithConfig } = require("../src/services/ai/openAiCompatibleProvider");
+const { extractJson, normalizeEnvelope, parseCommands, parsePlan, parseInstruction, requestCommandsWithConfig, requestInstructionWithConfig, requestDiscussionWithConfig, requestDiscussionStreamWithConfig, AI_STREAM_MAX_CONTENT_LENGTH } = require("../src/services/ai/openAiCompatibleProvider");
 
 test("AI provider extracts embedded arrays and normalizes compatible envelopes", () => {
   assert.deepEqual(extractJson("<think>ignore</think> result: ```json\n[{\"op\":\"item.delete\",\"item\":\"Old\"}]\n```"), [{ op:"item.delete", item:"Old" }]);
@@ -146,5 +146,33 @@ test('AI discussion streams compatible SSE deltas as they arrive',async(t)=>{
   const usage=db.prepare("SELECT input_tokens,output_tokens,first_token_ms FROM ai_usage_events WHERE provider_model='stream-model' ORDER BY created_at_ms DESC LIMIT 1").get();
   assert.deepEqual({inputTokens:usage.input_tokens,outputTokens:usage.output_tokens},{inputTokens:8,outputTokens:4});
   assert.ok(Number.isInteger(usage.first_token_ms)&&usage.first_token_ms>=0);
+});
+test('AI discussion permits large SSE envelopes beyond the former 500KB limit',async(t)=>{
+  t.mock.method(axios,'post',async(_url,_body,options)=>{
+    assert.equal(options.maxContentLength,8*1024*1024);
+    assert.equal(options.maxContentLength,AI_STREAM_MAX_CONTENT_LENGTH);
+    return{data:Readable.from([
+      `data: ${JSON.stringify({choices:[{delta:{reasoning_content:'x'.repeat(600000),content:'可见回答'}}]})}\n\n`,
+      'data: [DONE]\n\n',
+    ])};
+  });
+  const result=await requestDiscussionStreamWithConfig('生成详细建议',{onDelta:()=>{}},{baseURL:'https://ai.example/v1',apiKey:'secret',model:'large-stream',requestTimeoutMs:60000});
+  assert.equal(result.answer,'可见回答');
+});
+test('AI discussion preserves partial text when the upstream stream is interrupted',async(t)=>{
+  async function* interrupted(){
+    yield 'data: {"choices":[{"delta":{"content":"已生成部分内容"}}]}\n\n';
+    throw Object.assign(new Error('stream has been aborted'),{code:'ERR_BAD_RESPONSE'});
+  }
+  t.mock.method(axios,'post',async()=>({data:Readable.from(interrupted())}));
+  const deltas=[];
+  await assert.rejects(
+    ()=>requestDiscussionStreamWithConfig('生成建议',{onDelta:value=>deltas.push(value)},{baseURL:'https://ai.example/v1',apiKey:'secret',model:'interrupted-stream',requestTimeoutMs:60000}),
+    error=>error.code==='AI_STREAM_INTERRUPTED'&&error.partialAnswer==='已生成部分内容'&&error.upstreamCode==='ERR_BAD_RESPONSE',
+  );
+  assert.deepEqual(deltas,['已生成部分内容']);
+  const usage=db.prepare("SELECT error_code,first_token_ms FROM ai_usage_events WHERE provider_model='interrupted-stream' ORDER BY created_at_ms DESC LIMIT 1").get();
+  assert.equal(usage.error_code,'AI_STREAM_INTERRUPTED');
+  assert.ok(Number.isInteger(usage.first_token_ms));
 });
 test.after(()=>db.close());

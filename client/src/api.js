@@ -13,28 +13,30 @@ async function streamRequest(path,body,{onMeta,onDelta,onStage,onUsage,onTools,o
   const response=await fetch(`${BASE}${path}`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','Accept':'application/x-ndjson'},body:JSON.stringify(body),signal});
   if(!response.ok){let data=null;try{data=await response.json();}catch{/* empty */}const error=new ApiError(data?.error||`Request failed (${response.status})`,{code:data?.code||'',status:response.status});if(response.status===401)unauthorizedHandler?.(error);throw error;}
   if(!response.body)throw new ApiError('浏览器不支持流式响应',{code:'AI_STREAM_UNAVAILABLE',status:500});
-  const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='',completed=null,result=null;
+  const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='',completed=null,result=null,receivedDelta=false;
   const consume=line=>{
     if(!line.trim())return;
     let event;try{event=JSON.parse(line);}catch{return;}
     onEvent?.(event);
     if(event.type==='meta')onMeta?.(event);
-    else if(event.type==='delta')onDelta?.(event.content||'');
+    else if(event.type==='delta'){receivedDelta=receivedDelta||Boolean(event.content);onDelta?.(event.content||'');}
     else if(event.type==='stage')onStage?.(event);
     else if(event.type==='usage')onUsage?.(event);
     else if(event.type==='tools')onTools?.(event);
     else if(event.type==='result'){result=event.result;onResult?.(event.result);}
     else if(event.type==='done'){completed=event;onDone?.(event);}
-    else if(event.type==='error')throw new ApiError(event.message||'AI 流式请求失败',{code:event.code||'AI_DISCUSSION_FAILED',status:event.status||502});
+    else if(event.type==='error'){const error=new ApiError(event.message||'AI 流式请求失败',{code:event.code||'AI_DISCUSSION_FAILED',status:event.status||502});Object.assign(error,{partial:Boolean(event.partial),retryable:Boolean(event.retryable),run:event.run||null});throw error;}
   };
-  while(true){
-    const{done,value}=await reader.read();buffer+=decoder.decode(value||new Uint8Array(),{stream:!done});
-    const lines=buffer.split(/\r?\n/);buffer=lines.pop()||'';
-    for(const line of lines)consume(line);
-    if(done)break;
-  }
+  try{
+    while(true){
+      const{done,value}=await reader.read();buffer+=decoder.decode(value||new Uint8Array(),{stream:!done});
+      const lines=buffer.split(/\r?\n/);buffer=lines.pop()||'';
+      for(const line of lines)consume(line);
+      if(done)break;
+    }
+  }catch(cause){if(cause instanceof ApiError)throw cause;const error=new ApiError(receivedDelta?'AI 流式响应意外中断':'AI 流式请求失败',{code:receivedDelta?'AI_STREAM_INTERRUPTED':'AI_UPSTREAM_REQUEST_FAILED',status:502});Object.assign(error,{partial:receivedDelta,retryable:receivedDelta,cause});throw error;}
   if(buffer.trim())consume(buffer);
-  if(!completed)throw new ApiError('AI 流式响应意外中断',{code:'AI_STREAM_INTERRUPTED',status:502});
+  if(!completed){const error=new ApiError('AI 流式响应意外中断',{code:'AI_STREAM_INTERRUPTED',status:502});Object.assign(error,{partial:receivedDelta,retryable:receivedDelta});throw error;}
   return {...completed,result};
 }
 export const api = {

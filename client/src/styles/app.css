@@ -937,7 +937,11 @@ table.admin-table td.desc-cell { white-space: normal; max-width: 220px; color: v
 .ai-discussion-messages>article>div { padding:11px 13px; border:1px solid var(--border); border-radius:4px 12px 12px 12px; background:var(--bg); font-size:13.5px; line-height:1.7; white-space:pre-wrap; overflow-wrap:anywhere; }
 .ai-discussion-messages>article.user>div { border-color:color-mix(in srgb,var(--accent) 30%,var(--border)); border-radius:12px 4px 12px 12px; background:var(--accent-soft); }
 .ai-discussion-messages>article.failed>div { border-color:color-mix(in srgb,var(--offline) 55%,var(--border)); }
+.ai-discussion-messages>article.partial>div { border-color:color-mix(in srgb,var(--warning,#d89a32) 55%,var(--border)); }
 .ai-discussion-messages>article>small { display:block; margin:4px 5px; color:var(--accent); font-size:10px; }
+.ai-discussion-messages>article>.ai-partial-answer { display:flex; align-items:center; justify-content:space-between; gap:10px; color:var(--text-tertiary); }
+.ai-partial-answer button { flex:0 0 auto; padding:2px 7px; border:0; border-radius:5px; background:var(--accent-soft); color:var(--accent); font:inherit; cursor:pointer; }
+.ai-partial-answer button:hover { background:var(--accent); color:#fff; }
 .ai-stream-caret { display:inline-block; width:2px; height:1.05em; margin-left:3px; vertical-align:-.13em; border-radius:1px; background:var(--accent); animation:ai-caret-blink .8s steps(1,end) infinite; }
 @keyframes ai-caret-blink { 0%,45%{opacity:1} 46%,100%{opacity:0} }
 .ai-discussion-column>footer { padding:12px 14px; border-top:1px solid var(--border); background:var(--bg); }

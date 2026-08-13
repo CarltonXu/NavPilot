@@ -118,10 +118,13 @@ async function streamDiscuss(req,res,scope){
     audit(req,'ai.discussion.created',{targetType:'ai_conversation',targetId:conversationId,metadata:{scope,inputHash:crypto.createHash('sha256').update(text).digest('hex'),model:result.model,streamed:true}});
     write({type:'done',conversationId,model:result.model,run:finalRun});
   }catch(error){
+    const partialAnswer=String(error.partialAnswer||'').trim(),partial=Boolean(partialAnswer);
+    if(partial&&run)runs.estimate(run.id,{outputTokens:runs.estimateTokens(partialAnswer)});
     const failedRun=run?runs.fail(run.id,error):null;
-    if(conversationId&&conversations.get(conversationId,req.auth.user))conversations.append(conversationId,req.auth.user,{role:'assistant',content:error.code==='AI_REQUEST_CANCELLED'?'AI 请求已取消':error.message||'AI 讨论失败',metadata:{mode:'discussion',kind:'error',code:error.code||'AI_DISCUSSION_FAILED',runId:run?.id||null,usage:failedRun}});
+    if(conversationId&&conversations.get(conversationId,req.auth.user))conversations.append(conversationId,req.auth.user,{role:'assistant',content:partialAnswer||(error.code==='AI_REQUEST_CANCELLED'?'AI 请求已取消':error.message||'AI 讨论失败'),metadata:{mode:'discussion',kind:partial?'partial':'error',code:error.code||'AI_DISCUSSION_FAILED',partial,retryable:partial,runId:run?.id||null,usage:failedRun}});
     audit(req,'ai.discussion.failed',{outcome:'failure',targetType:'ai_conversation',targetId:conversationId,metadata:{scope,reason:error.code||'AI_DISCUSSION_FAILED',streamed:true}});
-    write({type:'error',code:error.code||'AI_DISCUSSION_FAILED',message:error.message||'AI 流式请求失败'});
+    console.warn('[ai-stream]',JSON.stringify({code:error.code||'AI_DISCUSSION_FAILED',upstreamCode:error.upstreamCode||null,upstreamStatus:error.upstreamStatus||null,partial,partialLength:partialAnswer.length,runId:run?.id||null}));
+    write({type:'error',code:error.code||'AI_DISCUSSION_FAILED',message:error.message||'AI 流式请求失败',partial,retryable:partial,run:failedRun});
   }finally{if(!res.writableEnded)res.end();}
 }
 router.post('/public/plans',requireAdmin,requirePasswordChanged,(req,res)=>plan(req,res,'public'));
