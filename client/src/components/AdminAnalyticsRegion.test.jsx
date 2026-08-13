@@ -10,6 +10,7 @@ import {
   fitMapBounds,
   isSmallMapLocation,
   localizedRegionName,
+  mapZoomLimit,
   mapMarkerRadius,
   normalizeCityKey,
   zoomMapViewport,
@@ -48,6 +49,14 @@ describe("analytics region labels", () => {
       x: 0,
       y: 0,
     });
+    expect(clampMapViewport({ scale: 30, x: -99999, y: -99999 }, 20)).toEqual({
+      scale: 20,
+      x: -18240,
+      y: -9880,
+    });
+    expect(mapZoomLimit("world")).toBe(8);
+    expect(mapZoomLimit("provinces")).toBe(12);
+    expect(mapZoomLimit("cities")).toBe(20);
   });
 
   it("zooms around the pointer and fits selected country bounds", () => {
@@ -63,6 +72,14 @@ describe("analytics region labels", () => {
     );
     expect(fitted.scale).toBeGreaterThan(1);
     expect(fitted.scale).toBeLessThanOrEqual(6);
+    const cityFitted = fitMapBounds(
+      [
+        [766.4, 138.2],
+        [783.9, 150.1],
+      ],
+      14,
+    );
+    expect(cityFitted.scale).toBe(14);
   });
 
   it("adds readable markers for tiny map regions and scales them by traffic", () => {
