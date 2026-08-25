@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../api.js";
 import { useI18n } from "../i18n/LocaleContext.jsx";
 import Icon, { ContentIcon } from "./Icon.jsx";
@@ -31,6 +32,8 @@ function formatDuration(value, locale) {
 export function AvailabilityStrip({ value, onOpen, onDayOpen = null, className = "", tooltipPlacement = "above", displayDays = null }) {
   const { locale } = useI18n();
   const zh = locale !== "en";
+  const usePortalTooltip = className.includes("overview-availability");
+  const [portalTooltip, setPortalTooltip] = useState(null);
   const daily = value?.daily || Array.from({ length:30 }, (_, index) => ({ date:String(index), status:"unknown", checks:0 }));
   const visibleDayCount = Number.isFinite(displayDays) && displayDays > 0
     ? Math.max(1, Math.floor(displayDays))
@@ -53,7 +56,7 @@ export function AvailabilityStrip({ value, onOpen, onDayOpen = null, className =
         style={{ "--availability-bars":visibleDaily.length }}
         aria-label={zh ? `过去 ${visibleDaily.length} 天可用性` : `Availability over the last ${visibleDaily.length} days`}
       >
-        {visibleDaily.map((bucket) => (
+        {visibleDaily.map((bucket, index) => (
           <i
             className={bucket.status || "unknown"}
             key={bucket.date}
@@ -61,8 +64,20 @@ export function AvailabilityStrip({ value, onOpen, onDayOpen = null, className =
             tabIndex={dayAction && bucket.date.length > 5 ? 0 : undefined}
             onClick={dayAction && bucket.date.length > 5 ? (event) => { event.preventDefault(); event.stopPropagation(); dayAction(bucket.date); } : undefined}
             onKeyDown={dayAction && bucket.date.length > 5 ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); dayAction(bucket.date); } } : undefined}
+            onMouseEnter={usePortalTooltip ? (event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              const placeBelow = tooltipPlacement === "below" || rect.top < 86;
+              setPortalTooltip({ bucket, index, left:rect.left + rect.width / 2, top:placeBelow ? rect.bottom + 8 : rect.top - 8, below:placeBelow });
+            } : undefined}
+            onMouseLeave={usePortalTooltip ? () => setPortalTooltip(null) : undefined}
+            onFocus={usePortalTooltip ? (event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              const placeBelow = tooltipPlacement === "below" || rect.top < 86;
+              setPortalTooltip({ bucket, index, left:rect.left + rect.width / 2, top:placeBelow ? rect.bottom + 8 : rect.top - 8, below:placeBelow });
+            } : undefined}
+            onBlur={usePortalTooltip ? () => setPortalTooltip(null) : undefined}
           >
-            <span className={`availability-tooltip ${tooltipPlacement === "below" ? "below" : ""}`}>
+            <span className={`availability-tooltip ${tooltipPlacement === "below" ? "below" : ""} ${usePortalTooltip ? "portal-source" : ""}`}>
               <strong>{bucket.date.length > 5 ? formatDate(`${bucket.date}T00:00:00Z`, locale) : (zh ? "暂无数据" : "No data")}</strong>
               <small>{stateLabel(bucket.status, locale)}</small>
               {bucket.checks > 0 && <small>{zh ? `可用率 ${bucket.availability}% · ${bucket.checks} 次检测` : `${bucket.availability}% uptime · ${bucket.checks} checks`}</small>}
@@ -72,6 +87,18 @@ export function AvailabilityStrip({ value, onOpen, onDayOpen = null, className =
         ))}
       </span>
       <span className="availability-strip-foot"><small>{zh ? `${visibleDaily.length} 天前` : `${visibleDaily.length} days ago`}</small><small>{zh ? "今天" : "Today"}</small></span>
+      {usePortalTooltip && portalTooltip && createPortal(
+        <span
+          className={`availability-tooltip availability-tooltip-portal ${portalTooltip.below ? "below" : ""} ${portalTooltip.index === 0 ? "edge-start" : portalTooltip.index === visibleDaily.length - 1 ? "edge-end" : ""}`}
+          style={{ left:portalTooltip.left, top:portalTooltip.top }}
+        >
+          <strong>{portalTooltip.bucket.date.length > 5 ? formatDate(`${portalTooltip.bucket.date}T00:00:00Z`, locale) : (zh ? "暂无数据" : "No data")}</strong>
+          <small>{stateLabel(portalTooltip.bucket.status, locale)}</small>
+          {portalTooltip.bucket.checks > 0 && <small>{zh ? `可用率 ${portalTooltip.bucket.availability}% · ${portalTooltip.bucket.checks} 次检测` : `${portalTooltip.bucket.availability}% uptime · ${portalTooltip.bucket.checks} checks`}</small>}
+          {portalTooltip.bucket.averageLatencyMs != null && <small>{zh ? `平均 ${portalTooltip.bucket.averageLatencyMs} ms` : `${portalTooltip.bucket.averageLatencyMs} ms average`}</small>}
+        </span>,
+        document.body,
+      )}
     </>
   );
   if (!onOpen) return <span className={`availability-strip ${className}`}>{content}</span>;

@@ -101,7 +101,7 @@ describe('NavCard context menu', () => {
 
   it.each([
     ['compact', 14],
-    ['overview', 7],
+    ['overview', 14],
   ])('shows a readable monitoring range in %s mode', (viewMode, expectedDays) => {
     const result = renderCard({ item:{...item,check_enabled:1}, availability:{ state:'unknown', availability:null, checks:0, daily:Array.from({length:30},(_,index)=>({date:String(index),status:'unknown',checks:0})) }, viewMode });
     expect(result.container.querySelectorAll('.nav-card-availability .availability-bars>i')).toHaveLength(expectedDays);

@@ -172,7 +172,7 @@ export default function NavCard({
           </div>
           <span className="overview-resource-signals">
             <StatusPill status={item.status} latencyMs={item.latency_ms} checking={checking} />
-            {monitoringEnabled ? <AvailabilityStrip value={availability} onOpen={onShowAvailability} className="nav-card-availability overview-availability" displayDays={7} /> : null}
+            {monitoringEnabled ? <AvailabilityStrip value={availability} onOpen={onShowAvailability} className="nav-card-availability overview-availability" displayDays={14} tooltipPlacement="above" /> : null}
             <small>👆 {item.click_count || 0}</small>
           </span>
         </a>
@@ -266,17 +266,32 @@ export default function NavCard({
             </span>
           )}
         </div>
-        {monitoringEnabled ? <AvailabilityStrip value={availability} onOpen={onShowAvailability} className="nav-card-availability" /> : null}
-        <div className="nav-card-footer">
-          <StatusPill
-            status={item.status}
-            latencyMs={item.latency_ms}
-            checking={checking}
-          />
-          <span className="click-count" title={t("nav.clicks")}>
-            👆 {item.click_count || 0}
-          </span>
-        </div>
+        {monitoringEnabled ? (
+          <div className="nav-card-monitoring" aria-label={locale === "en" ? "Availability monitoring" : "可用性监控"}>
+            <AvailabilityStrip value={availability} onOpen={onShowAvailability} className="nav-card-availability" />
+            <div className="nav-card-monitoring-meta">
+              <StatusPill
+                status={item.status}
+                latencyMs={item.latency_ms}
+                checking={checking}
+              />
+              <span className="click-count" title={t("nav.clicks")}>
+                👆 {item.click_count || 0}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="nav-card-footer">
+            <StatusPill
+              status={item.status}
+              latencyMs={item.latency_ms}
+              checking={checking}
+            />
+            <span className="click-count" title={t("nav.clicks")}>
+              👆 {item.click_count || 0}
+            </span>
+          </div>
+        )}
       </a>
       {actions}
       {contextMenu}

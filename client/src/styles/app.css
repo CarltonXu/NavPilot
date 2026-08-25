@@ -563,7 +563,7 @@
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(236px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(286px, 100%), 1fr));
   gap: 12px;
 }
 
@@ -612,6 +612,8 @@
 .overview-resource-list { display:grid;grid-template-columns:repeat(auto-fill,minmax(520px,1fr));gap:10px; }.overview-panel .overview-resource-list{grid-template-columns:1fr;max-height:420px;overflow:auto;padding:10px;scrollbar-width:thin}.overview-resource-card{container-type:inline-size;position:relative;min-width:0;border:1px solid var(--border);border-radius:11px;background:var(--bg);transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}.overview-resource-main{min-height:96px;display:grid;grid-template-columns:50px minmax(130px,.9fr) minmax(150px,1.2fr) minmax(112px,auto);align-items:center;gap:13px;padding:11px 13px;color:inherit;text-decoration:none}.overview-resource-card.favorite-control .overview-resource-main{padding-right:48px}.overview-resource-icon{grid-column:1;align-self:center;width:48px;height:48px;display:grid;place-items:center;border:1px solid var(--border);border-radius:13px;background:var(--bg-elevated);transition:transform .18s ease,color .18s ease}.overview-resource-meta{grid-column:2;min-width:0;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:4px}.overview-resource-meta .resource-title,.overview-resource-meta .resource-url{display:block;width:100%;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.overview-resource-details{grid-column:3;min-width:0;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:6px}.overview-resource-details .resource-description{width:100%;max-width:100%;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal;overflow-wrap:anywhere}.overview-resource-taxonomy{width:100%;min-width:0;display:flex;align-items:center;flex-wrap:wrap;gap:4px;overflow:visible}.overview-resource-taxonomy>*{flex:0 1 auto}.overview-resource-signals{grid-column:4;min-width:112px;align-self:stretch;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;padding-left:12px;border-left:1px solid var(--border);text-align:center}.overview-resource-signals .status-pill{font-size:10.5px}.overview-resource-signals>small{color:var(--text-tertiary);font:10.5px var(--font-mono)}.overview-resource-card .item-actions{display:none;top:50%;right:8px;flex-direction:row;transform:translateY(-50%);background:color-mix(in srgb,var(--bg-elevated) 96%,transparent);border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.12)}.overview-resource-card:hover .item-actions,.overview-resource-card:focus-within .item-actions,.overview-resource-card .item-actions.favorite-active{display:flex}.overview-resource-card .item-actions.favorite-active:not(:hover) .mini-btn:not(.favorite-btn){display:none}.overview-resource-card.manageable:hover .overview-resource-signals,.overview-resource-card.manageable:focus-within .overview-resource-signals{visibility:hidden}
 @container (max-width:560px){.overview-resource-main{grid-template-columns:50px minmax(0,1fr) minmax(108px,auto);grid-template-rows:auto auto;row-gap:6px}.overview-resource-icon{grid-column:1;grid-row:1/3}.overview-resource-meta{grid-column:2;grid-row:1}.overview-resource-details{grid-column:2;grid-row:2}.overview-resource-signals{grid-column:3;grid-row:1/3}}
 @container (max-width:420px){.overview-resource-main{grid-template-columns:50px minmax(0,1fr);grid-template-rows:auto auto auto}.overview-resource-icon{grid-column:1;grid-row:1/3}.overview-resource-meta{grid-column:2;grid-row:1}.overview-resource-details{grid-column:2;grid-row:2}.overview-resource-signals{grid-column:2;grid-row:3;min-width:0;align-self:auto;flex-direction:row;justify-content:flex-start;padding:7px 0 0;border-left:0;border-top:1px solid var(--border)}}
+.overview-resource-card:hover,.overview-resource-card:focus-within { z-index: 8; }
+.overview-resource-signals { position: relative; z-index: 1; }
 .overview-empty{padding:28px 14px;text-align:center;color:var(--text-tertiary);font-size:10px}.overview-tag-cloud{min-height:180px;display:flex;align-content:flex-start;align-items:center;justify-content:center;flex-wrap:wrap;gap:8px;padding:18px}.overview-tag-cloud button{display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid color-mix(in srgb,var(--accent) 32%,var(--border));border-radius:999px;background:color-mix(in srgb,var(--accent-soft) 55%,var(--bg));color:var(--text-secondary);cursor:pointer;transition:transform .18s ease,border-color .18s ease}.overview-tag-cloud button:hover{transform:translateY(-2px);border-color:var(--accent);color:var(--accent)}.overview-tag-cloud button span{font-size:inherit}.overview-tag-cloud button strong{font:8px var(--font-mono);color:var(--text-tertiary)}
 .overview-catalog{padding:14px;border:1px solid var(--border);border-radius:14px;background:color-mix(in srgb,var(--bg-elevated) 55%,transparent)}.overview-catalog>header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}.overview-catalog>header>div{display:flex;flex-direction:column;gap:3px}.overview-catalog>header strong{font-size:12px}.overview-catalog>header small{color:var(--text-tertiary);font-size:9.5px}.overview-catalog>header>span{padding:4px 8px;border-radius:99px;background:var(--accent-soft);color:var(--accent);font:9px var(--font-mono)}
 .nav-card::after { content:'';position:absolute;inset:-1px;pointer-events:none;border-radius:inherit;opacity:0;transition:opacity var(--transition);background-image:linear-gradient(var(--accent),var(--accent)),linear-gradient(var(--accent),var(--accent)),linear-gradient(var(--accent),var(--accent)),linear-gradient(var(--accent),var(--accent)),linear-gradient(var(--accent),var(--accent)),linear-gradient(var(--accent),var(--accent)),linear-gradient(var(--accent),var(--accent)),linear-gradient(var(--accent),var(--accent));background-position:top left,top left,top right,top right,bottom left,bottom left,bottom right,bottom right;background-size:12px 2px,2px 12px,12px 2px,2px 12px,12px 2px,2px 12px,12px 2px,2px 12px;background-repeat:no-repeat; }
@@ -642,18 +644,18 @@
 .nav-list-status>.status-pill { align-self:flex-start; }
 .nav-list-status .compact-availability { width:100%; max-width:148px; margin-top:0; }
 .nav-list-status .compact-availability .availability-strip-head,.nav-list-status .compact-availability .availability-strip-foot { display:none; }
-.nav-list-status .compact-availability .availability-bars { height:18px; gap:2px; }
-.nav-list-status .compact-availability .availability-bars>i { height:14px; min-width:0; border-radius:3px; }
-.nav-list-status .compact-availability .availability-bars>i:hover,.nav-list-status .compact-availability .availability-bars>i:focus-visible { height:14px; filter:brightness(1.12); box-shadow:0 0 0 2px color-mix(in srgb,currentColor 16%,transparent); }
+.nav-list-status .compact-availability .availability-bars { height:18px; grid-template-columns:repeat(var(--availability-bars),6px); justify-content:start; column-gap:3.8px; row-gap:0; }
+.nav-list-status .compact-availability .availability-bars>i { height:15px; width:6px; min-width:6px; border-radius:2px; }
+.nav-list-status .compact-availability .availability-bars>i:hover,.nav-list-status .compact-availability .availability-bars>i:focus-visible { height:15px; transform:scaleY(1.35); transform-origin:center; filter:brightness(1.12); }
 .overview-resource-signals .overview-availability { width:100%; }
 .overview-resource-signals .overview-availability .availability-strip-head { gap:5px; }
 .overview-resource-signals .overview-availability .availability-strip-head>strong { font-size:9.5px; }
 .overview-resource-signals .overview-availability .availability-state { font-size:8.5px; gap:4px; }
 .overview-resource-signals .overview-availability .availability-state>i { width:6px; height:6px; }
 .overview-resource-signals .overview-availability .availability-strip-foot { display:none; }
-.overview-resource-signals .overview-availability .availability-bars { height:20px; gap:3px; }
-.overview-resource-signals .overview-availability .availability-bars>i { height:16px; min-width:0; border-radius:4px; }
-.overview-resource-signals .overview-availability .availability-bars>i:hover,.overview-resource-signals .overview-availability .availability-bars>i:focus-visible { height:16px; filter:brightness(1.12); box-shadow:0 0 0 2px color-mix(in srgb,currentColor 16%,transparent); }
+.overview-resource-signals .overview-availability .availability-bars { height:18px; grid-template-columns:repeat(var(--availability-bars),6px); justify-content:start; column-gap:2px; row-gap:0; }
+.overview-resource-signals .overview-availability .availability-bars>i { height:15px; width:6px; min-width:6px; border-radius:2px; }
+.overview-resource-signals .overview-availability .availability-bars>i:hover,.overview-resource-signals .overview-availability .availability-bars>i:focus-visible { height:15px; transform:scaleY(1.35); transform-origin:center; filter:brightness(1.12); }
 .nav-list-main>.click-count { justify-content: flex-start; }
 .nav-list-row .item-actions { top: 50%; transform: translateY(-50%); }
 @media (hover:hover) and (pointer:fine) {
@@ -799,6 +801,54 @@
   margin-top: auto;
   padding-top: 9px;
   border-top: 1px solid var(--border);
+}
+.nav-card-monitoring {
+  min-width: 0;
+  min-height: 78px;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  margin-top: auto;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+.nav-card-monitoring-meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.nav-card-monitoring-meta .status-pill { min-width: 0; }
+.nav-card-monitoring-meta .click-count { margin-left: auto; white-space: nowrap; }
+.nav-card-monitoring .nav-card-availability {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  gap: 5px;
+}
+.nav-card-monitoring .nav-card-availability .availability-strip-head,
+.nav-card-monitoring .nav-card-availability .availability-strip-foot { display: flex; }
+.nav-card-monitoring .nav-card-availability .availability-strip-head > strong { font-size: 10px; }
+.nav-card-monitoring .nav-card-availability .availability-strip-foot { margin-top: 1px; }
+.nav-card-monitoring .nav-card-availability .availability-bars {
+  height: 18px;
+  grid-template-columns: repeat(var(--availability-bars), 6px);
+  justify-content: start;
+  column-gap: 2.88px;
+  row-gap: 0;
+}
+.nav-card-monitoring .nav-card-availability .availability-bars > i {
+  height: 15px;
+  width: 6px;
+  min-width: 6px;
+  border-radius: 2px;
+}
+.nav-card-monitoring .nav-card-availability .availability-bars > i:hover,
+.nav-card-monitoring .nav-card-availability .availability-bars > i:focus-visible {
+  height: 15px;
+  transform: scaleY(1.35);
+  transform-origin: center;
+  filter: brightness(1.12);
 }
 .status-pill {
   display: inline-flex;
