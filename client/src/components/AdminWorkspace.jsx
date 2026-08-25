@@ -5,6 +5,8 @@ import { useI18n } from "../i18n/LocaleContext.jsx";
 import AiSettingsPanel from "./SystemSettingsModal.jsx";
 import AdminAnalytics, { AuditTable } from "./AdminAnalytics.jsx";
 import UserManagement from "./UserManagement.jsx";
+import AccessGroupManagement from "./AccessGroupManagement.jsx";
+import AvailabilityManagement from "./AvailabilityManagement.jsx";
 import ThemeSwitcher from "./ThemeSwitcher.jsx";
 import LocaleSwitcher from "./LocaleSwitcher.jsx";
 import Icon from "./Icon.jsx";
@@ -12,11 +14,14 @@ import { normalizeBrandImage } from "../utils/imageProcessing.js";
 
 const tabs = [
   ["analytics", "grid", "analytics.title"],
+  ["availability", "monitor", "admin.availability"],
   ["audit", "shield", "analytics.audit"],
   ["users", "user", "admin.users"],
+  ["access", "users", "admin.accessGroups"],
   ["general", "settings", "settings.generalTitle"],
   ["ai", "assistant", "settings.aiMenu"],
 ];
+export const ADMIN_TAB_CACHE_TTL_MS = 60_000;
 
 function AdminLoading() {
   const { t } = useI18n();
@@ -508,11 +513,41 @@ export default function AdminWorkspace({
   onPublicInsightsChange,
 }) {
   const auth = useAuth();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [tab, setTab] = useState(() => {
     const saved = sessionStorage.getItem("navpilot_admin_tab");
     return tabs.some(([key]) => key === saved) ? saved : "analytics";
   });
+  const [loadedTabs, setLoadedTabs] = useState(() => new Set([tab]));
+  const [refreshTokens, setRefreshTokens] = useState({});
+  const loadedAt = useRef({ [tab]: Date.now() });
+  function refreshTab(key) {
+    loadedAt.current[key] = Date.now();
+    setRefreshTokens((current) => ({
+      ...current,
+      [key]: (current[key] || 0) + 1,
+    }));
+  }
+  function selectTab(key) {
+    const isLoaded = loadedTabs.has(key);
+    if (
+      isLoaded &&
+      key !== "general" &&
+      Date.now() - (loadedAt.current[key] || 0) >=
+        ADMIN_TAB_CACHE_TTL_MS
+    ) {
+      refreshTab(key);
+    } else if (!isLoaded) {
+      loadedAt.current[key] = Date.now();
+    }
+    setLoadedTabs((current) => {
+      if (current.has(key)) return current;
+      const next = new Set(current);
+      next.add(key);
+      return next;
+    });
+    setTab(key);
+  }
   useEffect(() => {
     if (!auth.loading && !auth.user) auth.setLoginOpen(true);
   }, [auth.loading, auth.user, auth.setLoginOpen]);
@@ -546,47 +581,85 @@ export default function AdminWorkspace({
           </button>
         </div>
       </header>
-      <nav
-        className="admin-tabs"
-        role="tablist"
-        aria-label={t("admin.workspace")}
-      >
-        {tabs.map(([key, icon, label]) => (
+      <div className="admin-tab-toolbar">
+        <nav
+          className="admin-tabs"
+          role="tablist"
+          aria-label={t("admin.workspace")}
+        >
+          {tabs.map(([key, icon, label]) => (
+            <button
+              role="tab"
+              aria-selected={tab === key}
+              className={tab === key ? "active" : ""}
+              key={key}
+              onClick={() => selectTab(key)}
+            >
+              <Icon name={icon} size={16} />
+              <span>{t(label)}</span>
+            </button>
+          ))}
+        </nav>
+        {tab !== "general" && (
           <button
-            role="tab"
-            aria-selected={tab === key}
-            className={tab === key ? "active" : ""}
-            key={key}
-            onClick={() => setTab(key)}
+            type="button"
+            className="icon-btn admin-tab-refresh"
+            aria-label={
+              locale === "en" ? "Refresh current tab" : "刷新当前标签页"
+            }
+            title={
+              locale === "en" ? "Refresh current tab" : "刷新当前标签页"
+            }
+            onClick={() => refreshTab(tab)}
           >
-            <Icon name={icon} size={16} />
-            <span>{t(label)}</span>
+            <Icon name="refresh" size={15} />
+            <span>{locale === "en" ? "Refresh" : "刷新"}</span>
           </button>
-        ))}
-      </nav>
+        )}
+      </div>
       <main className="admin-tab-content">
-        <section className="admin-tab-panel" hidden={tab !== "analytics"}>
-          <AdminAnalytics />
-        </section>
-        <section className="admin-tab-panel" hidden={tab !== "audit"}>
-          <AuditTable />
-        </section>
-        <section className="admin-tab-panel" hidden={tab !== "users"}>
-          <UserManagement />
-        </section>
-        <section className="admin-tab-panel" hidden={tab !== "general"}>
-          <GeneralSettings
-            theme={theme}
-            onThemeChange={onThemeChange}
-            branding={branding}
-            onBrandingChange={onBrandingChange}
-            publicInsights={publicInsights}
-            onPublicInsightsChange={onPublicInsightsChange}
-          />
-        </section>
-        <section className="admin-tab-panel" hidden={tab !== "ai"}>
-          <AiSettingsPanel />
-        </section>
+        {loadedTabs.has("analytics") && (
+          <section className="admin-tab-panel" hidden={tab !== "analytics"}>
+            <AdminAnalytics refreshToken={refreshTokens.analytics || 0} />
+          </section>
+        )}
+        {loadedTabs.has("audit") && (
+          <section className="admin-tab-panel" hidden={tab !== "audit"}>
+            <AuditTable refreshToken={refreshTokens.audit || 0} />
+          </section>
+        )}
+        {loadedTabs.has("availability") && (
+          <section className="admin-tab-panel" hidden={tab !== "availability"}>
+            <AvailabilityManagement refreshToken={refreshTokens.availability || 0} />
+          </section>
+        )}
+        {loadedTabs.has("users") && (
+          <section className="admin-tab-panel" hidden={tab !== "users"}>
+            <UserManagement refreshToken={refreshTokens.users || 0} />
+          </section>
+        )}
+        {loadedTabs.has("access") && (
+          <section className="admin-tab-panel" hidden={tab !== "access"}>
+            <AccessGroupManagement refreshToken={refreshTokens.access || 0} />
+          </section>
+        )}
+        {loadedTabs.has("general") && (
+          <section className="admin-tab-panel" hidden={tab !== "general"}>
+            <GeneralSettings
+              theme={theme}
+              onThemeChange={onThemeChange}
+              branding={branding}
+              onBrandingChange={onBrandingChange}
+              publicInsights={publicInsights}
+              onPublicInsightsChange={onPublicInsightsChange}
+            />
+          </section>
+        )}
+        {loadedTabs.has("ai") && (
+          <section className="admin-tab-panel" hidden={tab !== "ai"}>
+            <AiSettingsPanel refreshToken={refreshTokens.ai || 0} />
+          </section>
+        )}
       </main>
     </div>
   );

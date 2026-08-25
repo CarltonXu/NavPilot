@@ -1,11 +1,14 @@
-import React from "react";
+import React, { useCallback, useState } from "react";
 import StatusPill from "./StatusPill.jsx";
 import Icon, { ContentIcon } from "./Icon.jsx";
+import ContextMenu from "./ContextMenu.jsx";
 import { useI18n } from "../i18n/LocaleContext.jsx";
+import { AvailabilityStrip } from "./AvailabilityTimeline.jsx";
 export default function NavCard({
   item,
   checking,
   canManage,
+  canConfigure = canManage,
   selected = false,
   viewMode = "card",
   onClick,
@@ -18,6 +21,9 @@ export default function NavCard({
   canFavorite = false,
   favoriteBusy = false,
   onToggleFavorite,
+  onCopied,
+  availability = null,
+  onShowAvailability,
 }) {
   const { t, locale } = useI18n();
   let host = item.url;
@@ -27,6 +33,34 @@ export default function NavCard({
     /* keep */
   }
   const tags = Array.isArray(item.tags) ? item.tags : [];
+  const monitoringEnabled = item.check_enabled === true || Number(item.check_enabled) === 1 || item.checkEnabled === true;
+  const accessBadge=item.scope==='public'&&item.visibility&&item.visibility!=='public'?<span className={`resource-access-badge ${item.visibility}`}><Icon name={item.visibility==='restricted'?'lock':'user'} size={12}/>{locale==='en'?(item.visibility==='restricted'?'Team resource':'Signed-in'):(item.visibility==='restricted'?'团队资源':'登录可见')}</span>:null;
+  const [contextPosition, setContextPosition] = useState(null);
+  const closeContextMenu = useCallback(() => setContextPosition(null), []);
+  const openContextMenu = event => {
+    if (event.shiftKey) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setContextPosition({ x:event.clientX, y:event.clientY });
+  };
+  const copyLink = async () => {
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(item.url);
+      else {
+        const field = document.createElement('textarea');
+        field.value = item.url;
+        field.style.position = 'fixed';
+        field.style.opacity = '0';
+        document.body.append(field);
+        field.select();
+        document.execCommand?.('copy');
+        field.remove();
+      }
+      onCopied?.();
+    } catch {
+      /* The browser may deny clipboard access; opening the resource still works. */
+    }
+  };
   const selection = canManage && (
     <label
       className="item-selection"
@@ -85,11 +119,25 @@ export default function NavCard({
       </>}
     </div>
   );
+  const contextMenu = contextPosition && <ContextMenu
+    x={contextPosition.x}
+    y={contextPosition.y}
+    onClose={closeContextMenu}
+    label={locale === 'en' ? `Actions for ${item.name}` : `「${item.name}」的操作`}
+  >
+    <div className="resource-context-heading"><ContentIcon value={item.icon} cachedUrl={item.icon_cache_url} size={18}/><span><strong>{item.name}</strong><small>{host}</small></span></div>
+    <a role="menuitem" data-context-action href={item.url} target="_blank" rel="noopener noreferrer" onClick={onClick}><Icon name="globe" size={16}/><span>{locale === 'en' ? 'Open in new tab' : '在新标签页打开'}</span></a>
+    <button type="button" role="menuitem" data-context-action onClick={copyLink}><Icon name="clipboard" size={16}/><span>{locale === 'en' ? 'Copy link' : '复制链接'}</span></button>
+    {canFavorite && <button type="button" role="menuitem" data-context-action disabled={favoriteBusy} onClick={() => onToggleFavorite?.()}><Icon name="star" size={16}/><span>{locale === 'en' ? (item.is_favorite ? 'Remove favorite' : 'Add favorite') : (item.is_favorite ? '取消收藏' : '添加收藏')}</span></button>}
+    {(item.check_enabled || availability) && <button type="button" role="menuitem" data-context-action onClick={() => onShowAvailability?.()}><Icon name="insights" size={16}/><span>{locale === 'en' ? 'Availability details' : '查看可用性'}</span></button>}
+    {canConfigure && <><div className="resource-context-divider" role="separator"/><button type="button" role="menuitem" data-context-action onClick={() => onEdit?.()}><Icon name="edit" size={16}/><span>{locale === 'en' ? 'Edit resource' : '编辑条目'}</span><kbd>E</kbd></button><button type="button" role="menuitem" data-context-action disabled={checking} onClick={() => onRecheck?.()}><Icon name="refresh" size={16}/><span>{locale === 'en' ? 'Check now' : '立即探测'}</span></button><button type="button" role="menuitem" data-context-action className="danger" onClick={() => onDelete?.()}><Icon name="trash" size={16}/><span>{locale === 'en' ? 'Delete resource' : '删除条目'}</span></button></>}
+  </ContextMenu>;
   if (viewMode === "overview")
     return (
       <div
-        className={`overview-resource-card selectable-item ${canFavorite ? "favorite-control" : ""} ${canManage ? "manageable" : ""} ${selected ? "selected" : ""}`}
+        className={`overview-resource-card selectable-item ${canFavorite ? "favorite-control" : ""} ${canManage ? "manageable" : ""} ${selected ? "selected" : ""} ${contextPosition ? "context-active" : ""}`}
         {...dragProps}
+        onContextMenu={openContextMenu}
       >
         {selection}
         <a
@@ -101,7 +149,7 @@ export default function NavCard({
           title={`${item.name}\n${item.description || host}`}
         >
           <span className="overview-resource-icon">
-            <ContentIcon value={item.icon} size={28} />
+            <ContentIcon value={item.icon} cachedUrl={item.icon_cache_url} size={28} />
           </span>
           <div className="overview-resource-meta">
             <strong className="resource-title" title={item.name}>{item.name}</strong>
@@ -124,17 +172,20 @@ export default function NavCard({
           </div>
           <span className="overview-resource-signals">
             <StatusPill status={item.status} latencyMs={item.latency_ms} checking={checking} />
+            {monitoringEnabled ? <AvailabilityStrip value={availability} onOpen={onShowAvailability} className="nav-card-availability overview-availability" /> : null}
             <small>👆 {item.click_count || 0}</small>
           </span>
         </a>
         {actions}
+        {contextMenu}
       </div>
     );
   if (viewMode === "compact")
     return (
       <div
-        className={`nav-list-row selectable-item ${selected ? "selected" : ""}`}
+        className={`nav-list-row selectable-item ${selected ? "selected" : ""} ${contextPosition ? "context-active" : ""}`}
         {...dragProps}
+        onContextMenu={openContextMenu}
       >
         {selection}
         <a
@@ -145,7 +196,7 @@ export default function NavCard({
           className="nav-list-main"
         >
           <span className="nav-card-icon">
-            <ContentIcon value={item.icon} />
+            <ContentIcon value={item.icon} cachedUrl={item.icon_cache_url} />
           </span>
           <span className="nav-list-title" title={item.name}>
             <strong className="resource-title">{item.name}</strong>
@@ -167,21 +218,20 @@ export default function NavCard({
             {item.category_name || t("category.uncategorized")}
           </span>
           <span className="nav-list-status">
-            <StatusPill
-              status={item.status}
-              latencyMs={item.latency_ms}
-              checking={checking}
-            />
+            <StatusPill status={item.status} latencyMs={item.latency_ms} checking={checking} />
+            {monitoringEnabled ? <AvailabilityStrip value={availability} onOpen={onShowAvailability} className="nav-card-availability compact-availability" /> : null}
           </span>
           <span className="click-count">{item.click_count || 0}</span>
         </a>
         {actions}
+        {contextMenu}
       </div>
     );
   return (
     <div
-      className={`nav-card selectable-item ${selected ? "selected" : ""}`}
+      className={`nav-card selectable-item ${selected ? "selected" : ""} ${contextPosition ? "context-active" : ""}`}
       {...dragProps}
+      onContextMenu={openContextMenu}
     >
       {selection}
       <a
@@ -193,10 +243,11 @@ export default function NavCard({
       >
         <div className="nav-card-top">
           <div className="nav-card-icon">
-            <ContentIcon value={item.icon} />
+            <ContentIcon value={item.icon} cachedUrl={item.icon_cache_url} />
           </div>
           <div style={{ minWidth: 0 }}>
             <div className="nav-card-name resource-title" title={item.name}>{item.name}</div>
+            {accessBadge}
             <div className="nav-card-url resource-url" title={item.url}>{host}</div>
           </div>
         </div>
@@ -215,6 +266,7 @@ export default function NavCard({
             </span>
           )}
         </div>
+        {monitoringEnabled ? <AvailabilityStrip value={availability} onOpen={onShowAvailability} className="nav-card-availability" /> : null}
         <div className="nav-card-footer">
           <StatusPill
             status={item.status}
@@ -227,6 +279,7 @@ export default function NavCard({
         </div>
       </a>
       {actions}
+      {contextMenu}
     </div>
   );
 }

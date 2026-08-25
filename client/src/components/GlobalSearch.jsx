@@ -232,7 +232,7 @@ export default function GlobalSearch() {
                   onClick={() => openResult(item, index)}
                 >
                   <span className="global-result-icon">
-                    <ContentIcon value={item.icon} size={20} />
+                    <ContentIcon value={item.icon} cachedUrl={item.icon_cache_url} size={20} />
                   </span>
                   <span className="global-result-copy">
                     <strong title={item.name}>{item.name}</strong>

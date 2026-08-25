@@ -1,6 +1,7 @@
 const { CommandBus, capabilityError } = require("./commandBus");
 const { createNavigationService, realm } = require("../navigationService");
 const { PERMISSIONS } = require("../authorizationService");
+const { createAccessControlService } = require("../accessControlService");
 
 const SPACES = new Set(["current", "all_visible", "public", "personal"]);
 const DIMENSIONS = new Set(["space", "category", "status", "tag", "domain", "monitoring"]);
@@ -24,11 +25,12 @@ function categoryPathMap(categories) {
 
 function visibleResources(db, args, context) {
   const navigation = createNavigationService(db), currentScope = context.currentScope === "public" ? "public" : "personal";
+  const access = createAccessControlService(db);
   const rows = [];
   for (const space of normalizeSpaces(args.spaces, currentScope)) {
     const current = space === "public" ? realm("public") : realm("personal", context.actor.id);
     const categories = navigation.listCategories(current), paths = categoryPathMap(categories);
-    for (const item of navigation.listItems(current)) rows.push({
+    for (const item of access.filterVisibleItems(context.actor, navigation.listItems(current))) rows.push({
       id:item.id,
       resourceKey:`${space}:${item.id}`,
       space,

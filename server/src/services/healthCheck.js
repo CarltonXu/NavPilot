@@ -83,9 +83,10 @@ async function checkAndPersist(item, options = {}) {
   return result;
 }
 
-async function checkItems({ scope = null, ownerId = null, force = false } = {}) {
+async function checkItems({ scope = null, ownerId = undefined, force = false } = {}) {
   let items;
-  if (scope) items = db.prepare(`SELECT * FROM items WHERE ${force ? '1=1' : 'check_enabled=1'} AND scope=? AND owner_id IS ?`).all(scope, ownerId);
+  if (scope && ownerId === undefined) items = db.prepare(`SELECT * FROM items WHERE ${force ? '1=1' : 'check_enabled=1'} AND scope=?`).all(scope);
+  else if (scope) items = db.prepare(`SELECT * FROM items WHERE ${force ? '1=1' : 'check_enabled=1'} AND scope=? AND owner_id IS ?`).all(scope, ownerId);
   else items = db.prepare('SELECT * FROM items WHERE check_enabled=1').all();
   const results = new Array(items.length);
   let cursor = 0;

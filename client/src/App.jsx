@@ -32,8 +32,14 @@ import {
 import { possibleURL } from "./utils/urlSuggestion.js";
 import {
   beginWorkspaceLoad,
+  canReuseWorkspaceSnapshot,
   failWorkspaceLoad,
 } from "./utils/workspaceSnapshot.js";
+import {
+  readWorkspaceCache,
+  WORKSPACE_CACHE_TTL_MS,
+  writeWorkspaceCache,
+} from "./utils/workspaceCache.js";
 import PersonalToolsModal from "./components/PersonalToolsModal.jsx";
 import GlobalSearch, { openGlobalSearch } from "./components/GlobalSearch.jsx";
 import DropdownMenu from "./components/DropdownMenu.jsx";
@@ -46,6 +52,9 @@ import {
 } from "./utils/categorySidebar.js";
 import AiWorkspace,{launchAiWorkspace}from"./components/AiWorkspace.jsx";
 import PublicInsights from"./components/PublicInsights.jsx";
+import { workspaceCapabilities } from "./utils/workspacePermissions.js";
+import { AvailabilityDetailModal } from "./components/AvailabilityTimeline.jsx";
+import { BulkAccessDialog, CategoryAccessDialog } from "./components/AccessControl.jsx";
 
 const validView = (value) => {
   const migrated = ["dense", "board"].includes(value) ? "overview" : value;
@@ -84,6 +93,7 @@ function BatchMoveBar({
   onDelete,
   onShare,
   onAi,
+  onAccess,
   moving,
   deleting,
   recognizing,
@@ -172,6 +182,7 @@ function BatchMoveBar({
             </button>
           )}
           {onAi&&<button className="icon-btn" disabled={deleting||recognizing} onClick={onAi}><Icon name="assistant" size={14}/>{locale==='en'?'Ask AI':'交给 AI'}</button>}
+          {onAccess&&<button className="icon-btn" disabled={deleting||recognizing} onClick={onAccess}><Icon name="shield" size={14}/>{locale==='en'?'Access':'授权'}</button>}
           <button
             className="icon-btn batch-delete-btn"
             disabled={moving || deleting || recognizing}
@@ -221,7 +232,9 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
   const auth = useAuth();
   const { t, errorMessage, locale } = useI18n();
   const generation = useRef(0);
-  const favoriteDefaultKey = useRef(null);
+  const inFlightLoads = useRef(new Map());
+  const loadedAt = useRef(new Map());
+  const workspaceVersions = useRef(new Map());
   const tagTrackRef = useRef(null);
   const identityKey = auth.loading
     ? null
@@ -239,6 +252,8 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     categories: [],
     items: [],
   });
+  const snapshotRef = useRef(snapshot);
+  useEffect(() => { snapshotRef.current = snapshot; }, [snapshot]);
   const [viewMode, setViewMode] = useState(() => {
       const cached = localStorage.getItem("navpilot_view_mode_v1");
       return cached === null ? null : validView(cached);
@@ -272,6 +287,10 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       collapsed: false,
     }),
     [assistantRequest, setAssistantRequest] = useState(null);
+  const [availability, setAvailability] = useState(() => new Map());
+  const [availabilityItem, setAvailabilityItem] = useState(null);
+  const availabilityCache = useRef(new Map());
+  const [accessCategory,setAccessCategory]=useState(null),[bulkAccessOpen,setBulkAccessOpen]=useState(false);
   const spaceReady =
     identityKey !== null &&
     selection.identityKey === identityKey &&
@@ -333,7 +352,6 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     setRecognitionResult(null);
     setShowRecognitionResult(false);
     setFavoriteBusy(new Set());
-    favoriteDefaultKey.current = null;
     const preferred =
         browserPreference(
           localStorage.getItem(`navpilot_space_v1:${auth.user?.id}`),
@@ -388,46 +406,106 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     return () => window.removeEventListener("navpilot:preferences-updated", apply);
   }, [auth.user?.id, identityKey]);
   const load = useCallback(
-    async ({ silent = false } = {}) => {
+    async ({ silent = false, preferCache = false } = {}) => {
       if (!spaceReady) return;
-      const key = `${identityKey}:${space}`,
-        current = ++generation.current;
-      setSnapshot((previous) => beginWorkspaceLoad(previous, key));
-      try {
-        const [categories, items] = await Promise.all([
-          api.listCategories(space),
-          api.listItems(space),
-        ]);
-        if (current !== generation.current) return;
-        setSnapshot({ key, status: "ready", categories, items });
-        setError("");
-      } catch (e) {
-        if (current === generation.current) {
-          setSnapshot((previous) => failWorkspaceLoad(previous, key));
-          if (!silent) setError(errorMessage(e));
+      const key = `${identityKey}:${space}`;
+      const pending = inFlightLoads.current.get(key);
+      if (pending) {
+        await pending;
+        if (
+          preferCache &&
+          canReuseWorkspaceSnapshot(snapshotRef.current,key,loadedAt.current.get(key),Date.now(),WORKSPACE_CACHE_TTL_MS)
+        )
+          return;
+      }
+      const now = Date.now();
+      let cached = null;
+      if (preferCache) {
+        if (space !== "public" && canReuseWorkspaceSnapshot(snapshotRef.current,key,loadedAt.current.get(key),now,WORKSPACE_CACHE_TTL_MS)) return;
+        cached = readWorkspaceCache(key, now);
+        if (cached) {
+          loadedAt.current.set(key, cached.storedAt);
+          workspaceVersions.current.set(key, cached.version);
+          if (space !== "public") setSnapshot((previous) =>
+            previous.key === key && previous.status === "ready"
+              ? previous
+              : {
+                  key,
+                  status: "ready",
+                  categories: cached.categories,
+                  items: cached.items,
+                },
+          );
+          if (space !== "public" && cached.fresh) return;
         }
       }
+      const current = ++generation.current;
+      if (!cached) setSnapshot((previous) => beginWorkspaceLoad(previous, key));
+      const request = (async () => {
+        try {
+          const result = await api.getWorkspace(
+            space,
+            workspaceVersions.current.get(key) || "",
+          );
+          if (current !== generation.current) return;
+          const loaded = Date.now();
+          loadedAt.current.set(key, loaded);
+          workspaceVersions.current.set(key, result.version || "");
+          if (result.changed === false) {
+            const existing = readWorkspaceCache(key, loaded);
+            if (existing) {
+              writeWorkspaceCache(key, existing, loaded);
+              setSnapshot({ key, status:"ready", categories:existing.categories, items:existing.items });
+            }
+            setError("");
+            return;
+          }
+          const next = {
+            key,
+            status: "ready",
+            categories: result.categories || [],
+            items: result.items || [],
+          };
+          setSnapshot(next);
+          writeWorkspaceCache(key, { ...next, version: result.version || "" }, loaded);
+          setError("");
+        } catch (e) {
+          if (current === generation.current) {
+            setSnapshot((previous) => failWorkspaceLoad(previous, key));
+            if (!silent) setError(errorMessage(e));
+          }
+        } finally {
+          inFlightLoads.current.delete(key);
+        }
+      })();
+      inFlightLoads.current.set(key, request);
+      return request;
     },
     [spaceReady, identityKey, space, errorMessage],
   );
   useEffect(() => {
     if (!spaceReady) return;
-    load();
-    const timer = setInterval(() => {
-      if (document.visibilityState === "visible") load({ silent: true });
-    }, 30000);
-    return () => clearInterval(timer);
+    load({ preferCache: true });
+    const refresh = () => {
+      if (document.visibilityState === "visible")
+        load({ silent: true, preferCache: true });
+    };
+    const timer = setInterval(refresh, WORKSPACE_CACHE_TTL_MS);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
   }, [spaceReady, load]);
   const expectedKey = spaceReady ? `${identityKey}:${space}` : null,
     ready = snapshot.key === expectedKey && snapshot.status === "ready";
   const categories = ready ? snapshot.categories : [],
     items = ready ? snapshot.items : [];
   const favoriteItems = useMemo(() => items.filter(item=>item.is_favorite).sort((a,b)=>Number(b.favorite_at_ms||0)-Number(a.favorite_at_ms||0)),[items]);
-  useEffect(() => {
-    if (!ready || !expectedKey || favoriteDefaultKey.current === expectedKey) return;
-    favoriteDefaultKey.current = expectedKey;
-    setActiveTag(items.some((item) => item.is_favorite) ? FAVORITES_FILTER : "");
-  }, [ready, expectedKey, items]);
   useEffect(()=>{
     if(!ready)return;
     const filter=initialPortalFilter.current();
@@ -476,7 +554,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       observer?.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [allTags, favoriteItems.length]);
+  }, [allTags]);
   const filtered = useMemo(
     () =>
       filterByCategory(items, categories, activeCategory).filter((item) => {
@@ -496,6 +574,32 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       }),
     [items, categories, activeCategory, activeTag, query],
   );
+  useEffect(() => {
+    if (!ready || !api.getAvailabilitySummaries) return undefined;
+    const candidates = filtered.filter((item) => item.check_enabled);
+    const needed = candidates.filter((item) => availabilityCache.current.get(item.id) !== `${item.last_checked_at || ""}:${item.status || "unknown"}:${item.latency_ms ?? ""}`);
+    if (!needed.length) return undefined;
+    let live = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const chunks = [];
+        for (let offset = 0; offset < needed.length; offset += 200) chunks.push(needed.slice(offset, offset + 200));
+        const results = await Promise.all(chunks.map((chunk) => api.getAvailabilitySummaries(chunk.map((item) => item.id), 30)));
+        if (!live) return;
+        const byId = new Map();
+        results.forEach((result) => (result.items || []).forEach((value) => byId.set(value.itemId, value)));
+        needed.forEach((item) => availabilityCache.current.set(item.id, `${item.last_checked_at || ""}:${item.status || "unknown"}:${item.latency_ms ?? ""}`));
+        setAvailability((current) => {
+          const next = new Map(current);
+          byId.forEach((value, id) => next.set(id, value));
+          return next;
+        });
+      } catch {
+        /* Availability is supplemental and must not block the workspace. */
+      }
+    }, 250);
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [filtered, ready]);
   const categorySelections = useMemo(
     () => categorySelectionStates(categories, items, selectedIds),
     [categories, items, selectedIds],
@@ -509,15 +613,22 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     });
     return map;
   }, [filtered]);
-  const isPersonalOwner = space === "personal" && auth.authenticated && ready;
-  const canEditPublic =
-    space === "public" &&
-    auth.isAdmin &&
-    !auth.user?.mustChangePassword &&
-    ready;
-  const canUseSpaceTools = isPersonalOwner || canEditPublic;
-  const canManage =
-    (canEditPublic && publicEditMode) || (isPersonalOwner && personalEditMode);
+  const {
+    isPersonalOwner,
+    canEditPublic,
+    canUseSpaceTools,
+    canConfigureItems,
+    canManage,
+  } = workspaceCapabilities({
+    space,
+    authenticated: auth.authenticated,
+    isAdmin: auth.isAdmin,
+    mustChangePassword: auth.user?.mustChangePassword,
+    ready,
+    publicEditMode,
+    personalEditMode,
+    recognizing,
+  });
   function exitEditModes() {
     if (recognizing) {
       toastMessage(t("batch.recognitionLocked"));
@@ -552,7 +663,6 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       localStorage.setItem(`navpilot_space_v1:${auth.user.id}`, next);
     setSelection({ identityKey, space: next });
     setSnapshot({ key: null, status: "idle", categories: [], items: [] });
-    favoriteDefaultKey.current = null;
     setActiveCategory("all");
     setActiveTag("");
     setQuery("");
@@ -563,21 +673,21 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     setViewMode(normalized);
   }
   async function saveItem(form) {
-    if (!canManage) return;
+    if (!canConfigureItems) return;
     if (editingItem?.id) await api.updateItem(editingItem.id, form);
     else await api.createItem({ ...form, scope: space });
     setEditingItem(null);
     await load();
   }
   async function deleteItem(item) {
-    if (!canManage) return;
+    if (!canConfigureItems) return;
     if (!confirm(t("confirm.deleteItem", { name: item.name }))) return;
     await api.deleteItem(item.id);
     setEditingItem(null);
     await load();
   }
   async function recheck(item) {
-    if (!canManage) return;
+    if (!canConfigureItems) return;
     setChecking((current) => new Set(current).add(item.id));
     try {
       await api.checkItem(item.id);
@@ -894,12 +1004,39 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     if (favoriteBusy.has(item.id)) return;
     const next=!item.is_favorite,previousAt=item.favorite_at_ms||null;
     setFavoriteBusy(current=>new Set(current).add(item.id));
-    setSnapshot(previous=>({...previous,items:previous.items.map(value=>value.id===item.id?{...value,is_favorite:next,favorite_at_ms:next?Date.now():null}:value)}));
+    const updateFavoriteSnapshot = (favorite, favoriteAtMs, version) =>
+      setSnapshot((previous) => {
+        const updated = {
+          ...previous,
+          items: previous.items.map((value) =>
+            value.id === item.id
+              ? { ...value, is_favorite: favorite, favorite_at_ms: favoriteAtMs }
+              : value,
+          ),
+        };
+        if (previous.key && previous.status === "ready")
+          writeWorkspaceCache(previous.key, {
+            categories: updated.categories,
+            items: updated.items,
+            version,
+          });
+        return updated;
+      });
+    updateFavoriteSnapshot(
+      next,
+      next ? Date.now() : null,
+      workspaceVersions.current.get(expectedKey) || "",
+    );
     try {
       const result=await api.setItemFavorite(item.id,next);
-      setSnapshot(previous=>({...previous,items:previous.items.map(value=>value.id===item.id?{...value,is_favorite:result.favorite,favorite_at_ms:result.favoriteAtMs}:value)}));
+      workspaceVersions.current.set(expectedKey, "");
+      updateFavoriteSnapshot(result.favorite, result.favoriteAtMs, "");
     } catch (error) {
-      setSnapshot(previous=>({...previous,items:previous.items.map(value=>value.id===item.id?{...value,is_favorite:item.is_favorite,favorite_at_ms:previousAt}:value)}));
+      updateFavoriteSnapshot(
+        item.is_favorite,
+        previousAt,
+        workspaceVersions.current.get(expectedKey) || "",
+      );
       setError(errorMessage(error));
     } finally {
       setFavoriteBusy(current=>{const value=new Set(current);value.delete(item.id);return value;});
@@ -922,6 +1059,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
           viewMode={viewMode}
           checking={checking.has(item.id)}
           canManage={canManage && !recognizing}
+          canConfigure={canConfigureItems}
           selected={selectedIds.has(item.id)}
           onToggleSelect={() => toggleSelected(item.id)}
           onDragStart={(event) => startDrag(event, item)}
@@ -941,6 +1079,9 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
           canFavorite
           favoriteBusy={favoriteBusy.has(item.id)}
           onToggleFavorite={() => toggleFavorite(item)}
+          onCopied={() => toastMessage(locale === "en" ? "Link copied" : "链接已复制")}
+          availability={availability.get(item.id)}
+          onShowAvailability={() => setAvailabilityItem(item)}
         />
       ))}
     </div>
@@ -1090,6 +1231,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
               setShowPersonalTools(true);
             }}
             onAi={()=>{const names=items.filter(item=>selectedIds.has(item.id)).slice(0,30).map(item=>`「${item.name}」`).join('、');setAssistantRequest({id:Date.now(),scope:space,text:locale==='en'?`Analyze these selected resources and prepare an approval plan to categorize, tag, or improve them: ${names}`:`请分析我选中的这些资源，并生成分类、打标签或完善信息的待授权方案：${names}`,context:assistantContext});}}
+            onAccess={space==='public'?()=>setBulkAccessOpen(true):null}
             onMove={() =>
               moveItems(
                 [...selectedIds],
@@ -1106,7 +1248,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
         )}
         <ViewModeSwitcher value={viewMode} onChange={changeViewMode} />
       </div>
-      {(allTags.length > 0 || favoriteItems.length > 0) && (
+      {allTags.length > 0 && (
         <div className="tag-filter-bar">
           <span className="tag-filter-label">
             <Icon name="tag" size={14} />
@@ -1181,14 +1323,6 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
               </div>
             </DropdownMenu>
           )}
-          {favoriteItems.length > 0 && <button
-            className={`tag-filter-favorite ${activeTag === FAVORITES_FILTER ? "active" : ""}`}
-            onClick={() => setActiveTag(FAVORITES_FILTER)}
-          >
-            <Icon name="star" size={13}/>
-            {locale === "en" ? "Favorites" : "我的收藏"}
-            <strong>{favoriteItems.length}</strong>
-          </button>}
         </div>
       )}
       {error && <div className="error-text portal-error">{error}</div>}
@@ -1197,11 +1331,21 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
           categories={categories}
           counts={counts}
           active={activeCategory}
-          onSelect={setActiveCategory}
+          onSelect={(value) => {
+            setActiveCategory(value);
+            if (activeTag === FAVORITES_FILTER) setActiveTag("");
+          }}
+          favoriteCount={favoriteItems.length}
+          favoriteActive={activeTag === FAVORITES_FILTER}
+          onSelectFavorites={() => {
+            setActiveCategory("all");
+            setActiveTag(FAVORITES_FILTER);
+          }}
           manageable={canManage && !recognizing}
           onCreate={createCategory}
           onRename={renameCategory}
           onChangeIcon={changeCategoryIcon}
+          onAccess={space==='public'?setAccessCategory:null}
           onDelete={requestDelete}
           onDropItems={dropItems}
           onMoveCategory={moveCategory}
@@ -1251,6 +1395,17 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
               renderItems={renderItems}
               onTagSelect={setActiveTag}
             />
+          ) : activeTag === FAVORITES_FILTER ? (
+            <section className="category-section favorite-results">
+              <h2 className="category-heading">
+                <ContentIcon value="icon:star" size={18} />
+                <span className="eyebrow">{t("category.favorites")}</span>
+                <span className="sub">
+                  {t("app.itemsCount", { count: filtered.length })}
+                </span>
+              </h2>
+              {renderItems(filtered)}
+            </section>
           ) : activeCategory !== "all" ? (
             renderItems(filtered)
           ) : (
@@ -1289,6 +1444,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
           onConfirm={confirmDelete}
         />
       )}{" "}
+      {accessCategory&&<CategoryAccessDialog category={accessCategory} onClose={()=>setAccessCategory(null)} onSaved={load}/>} {bulkAccessOpen&&<BulkAccessDialog ids={[...selectedIds]} onClose={()=>setBulkAccessOpen(false)} onSaved={async()=>{setSelectedIds(new Set());await load();}}/>}
       {showPersonalTools && (
         <PersonalToolsModal
           scope={space}
@@ -1307,6 +1463,14 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
         <RecognitionResultDialog
           result={recognitionResult}
           onClose={() => setShowRecognitionResult(false)}
+        />
+      )}
+      {availabilityItem && (
+        <AvailabilityDetailModal
+          item={availabilityItem}
+          canCheck={canConfigureItems}
+          onClose={() => setAvailabilityItem(null)}
+          onCheck={async () => { await api.checkItem(availabilityItem.id); await load(); }}
         />
       )}
       <AiAssistantWidget
@@ -1366,10 +1530,26 @@ export default function App() {
     return () => window.removeEventListener("navpilot:preferences-updated", apply);
   }, []);
   useEffect(() => {
-    api
-      .getPublicSettings()
-      .then(setPublicSettings)
-      .catch(() => {});
+    const bootstrapTime = Number(
+      window.__NAVPILOT_BOOTSTRAP__?.bootstrapGeneratedAt || 0,
+    );
+    let refreshedAt = bootstrapTime;
+    const refresh = () => {
+      if (
+        document.visibilityState !== "visible" ||
+        Date.now() - refreshedAt < 300_000
+      )
+        return;
+      refreshedAt = Date.now();
+      api.getPublicSettings().then(setPublicSettings).catch(() => {});
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
   }, []);
   useEffect(() => {
     const branding = publicSettings.branding || {};

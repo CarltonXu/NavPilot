@@ -3,6 +3,7 @@ import { api } from "../api.js";
 import { useI18n } from "../i18n/LocaleContext.jsx";
 import Icon from "./Icon.jsx";
 import AdminPageHeader from "./AdminPageHeader.jsx";
+import AuthorizationOverview from "./AuthorizationOverview.jsx";
 
 function initials(user) {
   return String(user?.displayName || user?.username || "?")
@@ -153,7 +154,7 @@ function CreateUserDialog({
   );
 }
 
-export default function UserManagement() {
+export default function UserManagement({ refreshToken = 0 }) {
   const { t, errorMessage, locale } = useI18n();
   const [users, setUsers] = useState([]),
     [legacy, setLegacy] = useState([]),
@@ -195,7 +196,7 @@ export default function UserManagement() {
     return () => {
       live = false;
     };
-  }, [errorMessage]);
+  }, [errorMessage, refreshToken]);
   const stats = useMemo(
     () => ({
       total: users.length,
@@ -261,7 +262,10 @@ export default function UserManagement() {
     try {
       const detail = await api.getUser(id);
       setSelected(detail);
-      setDraft({ ...detail.user });
+      setDraft({
+        ...detail.user,
+        accessGroupIds: (detail.accessGroups || []).map((group) => group.id),
+      });
       setDetailPassword("");
     } catch (e) {
       setError(errorMessage(e));
@@ -272,7 +276,10 @@ export default function UserManagement() {
   async function reloadDetail(id) {
     const detail = await api.getUser(id);
     setSelected(detail);
-    setDraft({ ...detail.user });
+    setDraft({
+      ...detail.user,
+      accessGroupIds: (detail.accessGroups || []).map((group) => group.id),
+    });
   }
   async function saveUser() {
     setBusy(true);
@@ -282,6 +289,10 @@ export default function UserManagement() {
         displayName: draft.displayName,
         role: draft.role,
         status: draft.status,
+        accessGroupIds: draft.accessGroupIds || [],
+        expectedAccessGroupIds: (selected.accessGroups || []).map(
+          (group) => group.id,
+        ),
       });
       await Promise.all([refresh(), reloadDetail(draft.id)]);
     } catch (e) {
@@ -400,7 +411,7 @@ export default function UserManagement() {
           <span />
         </div>
         <div className={`account-list ${loading ? "loading" : ""}`}>
-          {loading ? (
+          {loading && !users.length ? (
             <div className="account-list-empty">{t("common.loading")}</div>
           ) : filtered.length ? (
             filtered.map((user) => (
@@ -415,7 +426,11 @@ export default function UserManagement() {
                   <i>{initials(user)}</i>
                   <span>
                     <strong>{user.displayName}</strong>
-                    <small>@{user.username}</small>
+                    <small>
+                      @{user.username}
+                      {user.accessGroupCount > 0 &&
+                        ` · ${t("admin.groupCount", { count: user.accessGroupCount })}`}
+                    </small>
                   </span>
                 </span>
                 <span className={`role-badge ${user.role}`}>
@@ -601,7 +616,14 @@ export default function UserManagement() {
                     <select
                       value={draft.role}
                       onChange={(event) =>
-                        setDraft({ ...draft, role: event.target.value })
+                        setDraft({
+                          ...draft,
+                          role: event.target.value,
+                          accessGroupIds:
+                            event.target.value === "admin"
+                              ? []
+                              : draft.accessGroupIds,
+                        })
                       }
                     >
                       <option value="user">{t("admin.roleUser")}</option>
@@ -621,6 +643,85 @@ export default function UserManagement() {
                     </select>
                   </div>
                 </div>
+              </section>
+              <section className="user-detail-section user-group-section">
+                <div className="user-group-section-head">
+                  <div>
+                    <h4>{t("admin.accessGroupMembership")}</h4>
+                    <p>{t("admin.accessGroupMembershipDesc")}</p>
+                  </div>
+                  <span>
+                    {t("admin.groupCount", {
+                      count: (draft.accessGroupIds || []).length,
+                    })}
+                  </span>
+                </div>
+                {draft.role === "admin" ? (
+                  <div className="user-group-admin-bypass">
+                    <span><Icon name="shield" size={17} /></span>
+                    <div>
+                      <strong>{t("admin.adminGroupBypass")}</strong>
+                      <small>{t("admin.adminGroupBypassDesc")}</small>
+                    </div>
+                  </div>
+                ) : (selected.availableAccessGroups || []).length ? (
+                  <div className="user-group-membership-list">
+                    {selected.availableAccessGroups.map((group) => {
+                      const checked = (draft.accessGroupIds || []).includes(
+                        group.id,
+                      );
+                      return (
+                        <label
+                          key={group.id}
+                          className={checked ? "selected" : ""}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={busy}
+                            onChange={() =>
+                              setDraft((current) => ({
+                                ...current,
+                                accessGroupIds: checked
+                                  ? current.accessGroupIds.filter(
+                                      (id) => id !== group.id,
+                                    )
+                                  : [...current.accessGroupIds, group.id],
+                              }))
+                            }
+                          />
+                          <span className="user-group-icon">
+                            <Icon name="users" size={15} />
+                          </span>
+                          <span>
+                            <strong>{group.name}</strong>
+                            <small>
+                              {group.description ||
+                                t("admin.accessGroupNoDescription")}
+                            </small>
+                          </span>
+                          <em>
+                            {t("admin.memberCount", {
+                              count: group.memberCount || 0,
+                            })}
+                          </em>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="user-group-empty">
+                    <Icon name="users" size={18} />
+                    <span>{t("admin.noAccessGroups")}</span>
+                  </div>
+                )}
+              </section>
+              <section className="user-detail-section user-authorization-section">
+                <div>
+                  <h4>{t("admin.authorizationDetails")}</h4>
+                  <p>{t("admin.authorizationDetailsDesc")}</p>
+                </div>
+                <AuthorizationOverview authorization={selected.authorization} />
               </section>
               <div className="user-meta-grid">
                 <div>

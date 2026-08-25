@@ -1,5 +1,6 @@
 const express=require('express');
 const crypto=require('crypto');
+const {AsyncLocalStorage}=require('node:async_hooks');
 const {requestCommands,requestInstruction,requestReportDesign,requestReportNarrative,requestDiscussion,requestDiscussionStream}=require('../services/ai/openAiCompatibleProvider');
 const {createPlan,serializePlan,loadPlan}=require('../services/ai/planService');
 const {executePlan,undoPlan}=require('../services/ai/commandExecutor');
@@ -14,12 +15,16 @@ const {buildInteractiveReportData,saveInteractiveReport,getInteractiveReport,ren
 const {PERMISSIONS,assertRealmPermission}=require('../services/authorizationService');
 const {instructionPreflight}=require('../services/ai/instructionPolicy');
 const {createRunService}=require('../services/ai/runService');
+const {createAccessControlService}=require('../services/accessControlService');
 const db=require('../db'),navigation=createNavigationService(db),conversations=createConversationService(db),runs=createRunService(db);
+const access=createAccessControlService(db);
 const router=express.Router();
+const actorContext=new AsyncLocalStorage();
+router.use((req,res,next)=>actorContext.run(req.auth?.user||null,next));
 function personalEnabled(){return getSetting('ai_personal_enabled','false')==='true';}
 function requirePublicAnalyze(req,res,next){return authorizePermission(req,res,PERMISSIONS.PUBLIC_ANALYZE,{scope:'public'},next);}
 function sendError(res,error,fallback='AI_UPSTREAM_REQUEST_FAILED'){return res.status(error.status||502).json({code:error.code||fallback,error:error.message||'AI 操作失败'});}
-function plannerContext(current,text){return buildPlannerContext({categories:navigation.listCategories(current),items:navigation.listItems(current),text});}
+function plannerContext(current,text){return buildPlannerContext({categories:navigation.listCategories(current),items:access.filterVisibleItems(actorContext.getStore(),navigation.listItems(current)),text});}
 async function plan(req,res,scope){const text=String(req.body.text||'').trim();if(!text)return res.status(400).json({code:'AI_TEXT_REQUIRED',error:'请输入描述内容'});try{const current=realm(scope,scope==='personal'?req.auth.user.id:null),locale=req.body.locale==='en'?'en':'zh-CN',conversationId=req.body.conversationId||null;let history=[];if(conversationId){const conversation=conversations.get(conversationId,req.auth.user);if(!conversation||conversation.realm_scope!==scope)throw Object.assign(new Error('对话不存在或空间不匹配'),{code:'AI_CONVERSATION_NOT_FOUND',status:404});history=conversations.messages(conversationId,req.auth.user)||[];conversations.append(conversationId,req.auth.user,{role:'user',content:text});}const result=await requestCommands(text,{locale,context:plannerContext(current,text),history,actorId:req.auth.user.id,realmScope:current.scope,realmOwnerId:current.ownerId}),value=createPlan({actor:req.auth.user,current,locale,text,commands:result.commands,model:result.model,summary:result.summary,suggestions:result.suggestions});if(conversationId)conversations.append(conversationId,req.auth.user,{role:'assistant',content:result.summary||`${value.operations.length} 项操作计划`,planId:value.id,metadata:{suggestions:result.suggestions,operationCount:value.operations.length}});audit(req,'ai.plan.created',{targetType:'ai_plan',targetId:value.id,metadata:{scope,conversationId,operationTypes:value.operations.map(x=>x.op),operationCount:value.operations.length,inputHash:crypto.createHash('sha256').update(text).digest('hex')}});return res.status(201).json({...value,conversationId});}catch(error){audit(req,'ai.plan.failed',{outcome:'failure',targetType:'ai_plan',metadata:{scope,reason:error.code||'AI_PLAN_FAILED'}});return sendError(res,error,'AI_PLAN_FAILED');}}
 async function performInstruction(req,scope,{emit=()=>{},signal}={}){
   const text=String(req.body.text||'').trim();
@@ -61,7 +66,7 @@ async function performInstruction(req,scope,{emit=()=>{},signal}={}){
     }
     if(result.kind==='query'){
       stage('tools');
-      const value=executeResourceQuery(db,current,{...result.query,title:result.title},locale);
+      const value=executeResourceQuery(db,current,{...result.query,title:result.title},locale,req.auth.user);
       const toolRun=runs.addTools(run.id,1,['resources.query']);emit({type:'tools',run:toolRun,tools:['resources.query']});
       const finalRun=runs.complete(run.id,{resultKind:'query',summary:{matched:value.summary.matched}});
       conversations.append(conversationId,req.auth.user,{role:'assistant',content:value.answer,metadata:{mode:'instruction',kind:'query',model:result.model,result:value,runId:run.id,usage:finalRun}});

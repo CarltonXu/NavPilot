@@ -5,14 +5,76 @@ const { requireAdmin, requirePasswordChanged } = require('../middleware/auth');
 const { createUser, updatePassword, sanitizeUser, validateUsername } = require('../services/authService');
 const { revokeAllSessions } = require('../services/sessionService');
 const { audit } = require('../services/eventService');
+const { createAccessControlService } = require('../services/accessControlService');
+const adminAccessRouter = require('./adminAccess');
 
 const router = express.Router();
+const access = createAccessControlService(db);
 router.use(requireAdmin, requirePasswordChanged);
+router.use('/', adminAccessRouter);
 
 function auditUser(user) { return user ? { username:user.username, displayName:user.display_name || user.displayName, role:user.role, status:user.status } : null; }
 
+function accessGroupsForUser(userId) {
+  return db.prepare(`SELECT g.id,g.name,g.description,g.version
+    FROM access_group_members m JOIN access_groups g ON g.id=m.group_id
+    WHERE m.user_id=? ORDER BY g.name COLLATE NOCASE`).all(userId);
+}
+
+function authorizationForUser(userId) {
+  const directResources = db.prepare(`SELECT i.id,i.name,i.url,i.visibility,i.category_id categoryId,c.name categoryName,
+    g.expires_at_ms expiresAtMs
+    FROM item_access_user_grants g JOIN items i ON i.id=g.item_id
+    LEFT JOIN categories c ON c.id=i.category_id WHERE g.user_id=?
+    ORDER BY i.name COLLATE NOCASE`).all(userId);
+  const groupResources = db.prepare(`SELECT i.id,i.name,i.url,i.visibility,i.category_id categoryId,c.name categoryName,
+    g.expires_at_ms expiresAtMs,a.id groupId,a.name groupName
+    FROM access_group_members m JOIN access_groups a ON a.id=m.group_id
+    JOIN item_access_group_grants g ON g.group_id=a.id JOIN items i ON i.id=g.item_id
+    LEFT JOIN categories c ON c.id=i.category_id WHERE m.user_id=?
+    ORDER BY i.name COLLATE NOCASE,a.name COLLATE NOCASE`).all(userId);
+  const directCategories = db.prepare(`SELECT c.id,c.name,c.parent_id parentId,g.expires_at_ms expiresAtMs
+    FROM category_access_user_defaults g JOIN categories c ON c.id=g.category_id
+    WHERE g.user_id=? ORDER BY c.name COLLATE NOCASE`).all(userId);
+  const groupCategories = db.prepare(`SELECT c.id,c.name,c.parent_id parentId,g.expires_at_ms expiresAtMs,
+    a.id groupId,a.name groupName
+    FROM access_group_members m JOIN access_groups a ON a.id=m.group_id
+    JOIN category_access_group_defaults g ON g.group_id=a.id JOIN categories c ON c.id=g.category_id
+    WHERE m.user_id=? ORDER BY c.name COLLATE NOCASE,a.name COLLATE NOCASE`).all(userId);
+  const uniqueResourceIds = new Set([...directResources, ...groupResources].map((resource) => resource.id));
+  return {
+    directResources, groupResources, directCategories, groupCategories,
+    summary: {
+      directResourceCount: directResources.length,
+      groupResourceCount: groupResources.length,
+      resourceCount: uniqueResourceIds.size,
+      categoryCount: directCategories.length + groupCategories.length,
+    },
+  };
+}
+
+function sameIds(left, right) {
+  if (left.length !== right.length) return false;
+  const sortedLeft = [...left].sort(), sortedRight = [...right].sort();
+  return sortedLeft.every((value, index) => value === sortedRight[index]);
+}
+
 router.get('/users', (req, res) => {
-  res.json(db.prepare("SELECT id,username,display_name AS displayName,role,status,must_change_password AS mustChangePassword,created_at AS createdAt,last_login_at AS lastLoginAt FROM users WHERE status!='pending_claim' ORDER BY created_at").all());
+  const users = db.prepare("SELECT id,username,display_name AS displayName,role,status,must_change_password AS mustChangePassword,created_at AS createdAt,last_login_at AS lastLoginAt FROM users WHERE status!='pending_claim' ORDER BY created_at").all();
+  const memberships = db.prepare(`SELECT m.user_id userId,g.id,g.name,g.description
+    FROM access_group_members m JOIN access_groups g ON g.id=m.group_id
+    JOIN users u ON u.id=m.user_id WHERE u.status!='pending_claim'
+    ORDER BY g.name COLLATE NOCASE`).all();
+  const byUser = new Map();
+  memberships.forEach((group) => {
+    const list = byUser.get(group.userId) || [];
+    list.push({ id:group.id, name:group.name, description:group.description });
+    byUser.set(group.userId, list);
+  });
+  res.json(users.map((user) => {
+    const accessGroups = byUser.get(user.id) || [];
+    return { ...user, accessGroups, accessGroupCount:accessGroups.length };
+  }));
 });
 
 router.get('/users/:id', (req, res) => {
@@ -24,7 +86,12 @@ router.get('/users/:id', (req, res) => {
     activeSessions:db.prepare('SELECT COUNT(*) count FROM sessions WHERE user_id=? AND revoked_at IS NULL AND absolute_expires_at>?').get(user.id,Date.now()).count,
     aiPlans:db.prepare('SELECT COUNT(*) count FROM ai_plans WHERE actor_user_id=?').get(user.id).count,
   };
-  return res.json({ user, stats });
+  const accessGroups = accessGroupsForUser(user.id);
+  const availableAccessGroups = db.prepare(`SELECT g.id,g.name,g.description,g.version,
+    (SELECT COUNT(*) FROM access_group_members m WHERE m.group_id=g.id) memberCount
+    FROM access_groups g ORDER BY g.name COLLATE NOCASE`).all();
+  const authorization = authorizationForUser(user.id);
+  return res.json({ user, stats, accessGroups, availableAccessGroups, authorization });
 });
 
 router.post('/users', async (req, res) => {
@@ -52,12 +119,48 @@ router.patch('/users/:id', (req, res) => {
   if (!displayName || displayName.length > 80) return res.status(400).json({ code:'INVALID_DISPLAY_NAME', error:'显示名不能为空且不能超过 80 个字符' });
   if (req.body.username !== undefined && String(req.body.username).toLowerCase() !== String(target.username).toLowerCase()) return res.status(409).json({code:'USERNAME_IMMUTABLE',error:'用户名注册后不允许修改'});
   const username=target.username;
-  try { db.prepare("UPDATE users SET username=?,display_name=?,role=?,status=?,updated_at=datetime('now') WHERE id=?").run(username, displayName, role, status, target.id); }
+  let accessGroupIds = null, currentAccessGroupIds = null;
+  if (req.body.accessGroupIds !== undefined) {
+    if (!Array.isArray(req.body.accessGroupIds)) return res.status(400).json({ code:'INVALID_USER_ACCESS_GROUPS', error:'授权组参数格式无效' });
+    accessGroupIds = [...new Set(req.body.accessGroupIds.map(String))];
+    if (accessGroupIds.length > 500) return res.status(400).json({ code:'TOO_MANY_USER_ACCESS_GROUPS', error:'单个账户最多加入 500 个授权组' });
+    const placeholders = accessGroupIds.map(() => '?').join(',');
+    const validIds = accessGroupIds.length ? db.prepare(`SELECT id FROM access_groups WHERE id IN (${placeholders})`).all(...accessGroupIds).map((row) => row.id) : [];
+    if (validIds.length !== accessGroupIds.length) return res.status(400).json({ code:'ACCESS_GROUP_NOT_FOUND', error:'选择的授权组不存在或已删除' });
+    currentAccessGroupIds = accessGroupsForUser(target.id).map((group) => group.id);
+    if (Array.isArray(req.body.expectedAccessGroupIds) && !sameIds(currentAccessGroupIds, [...new Set(req.body.expectedAccessGroupIds.map(String))]))
+      return res.status(409).json({ code:'VERSION_CONFLICT', error:'账户的授权组关系已被其他管理员修改，请刷新后重试' });
+  }
+  if (role === 'admin') {
+    if (accessGroupIds?.length) return res.status(400).json({ code:'ADMIN_GROUP_MEMBERSHIP_UNNECESSARY', error:'管理员默认拥有全部资源权限，无需加入授权组' });
+    if (currentAccessGroupIds === null) currentAccessGroupIds = accessGroupsForUser(target.id).map((group) => group.id);
+    accessGroupIds = [];
+  }
+  try {
+    db.transaction(() => {
+      db.prepare("UPDATE users SET username=?,display_name=?,role=?,status=?,updated_at=datetime('now') WHERE id=?").run(username, displayName, role, status, target.id);
+      if (accessGroupIds && !sameIds(currentAccessGroupIds, accessGroupIds)) {
+        const before = new Set(currentAccessGroupIds), after = new Set(accessGroupIds);
+        const removed = currentAccessGroupIds.filter((id) => !after.has(id));
+        const added = accessGroupIds.filter((id) => !before.has(id));
+        const remove = db.prepare('DELETE FROM access_group_members WHERE group_id=? AND user_id=?');
+        removed.forEach((groupId) => remove.run(groupId, target.id));
+        const insert = db.prepare('INSERT INTO access_group_members(group_id,user_id,added_by_user_id,created_at_ms) VALUES(?,?,?,?)');
+        const now = Date.now();
+        added.forEach((groupId) => insert.run(groupId, target.id, req.auth.user.id, now));
+        const touch = db.prepare('UPDATE access_groups SET version=version+1,updated_at_ms=? WHERE id=?');
+        [...removed, ...added].forEach((groupId) => touch.run(now, groupId));
+        access.bumpRevision();
+      }
+      const updated = db.prepare('SELECT * FROM users WHERE id=?').get(target.id);
+      audit(req, 'user.updated', { targetType:'user', targetId:target.id, metadata:{ before:auditUser(target), after:auditUser(updated), changedFields:Object.keys(req.body), beforeAccessGroupIds:currentAccessGroupIds, afterAccessGroupIds:accessGroupIds } });
+    })();
+  }
   catch (error) { if (String(error.code).includes('CONSTRAINT')) return res.status(409).json({code:'USERNAME_CONFLICT',error:'用户名已存在'}); throw error; }
   if (status === 'disabled' || role !== target.role) revokeAllSessions(target.id);
   const updated = db.prepare('SELECT * FROM users WHERE id=?').get(target.id);
-  audit(req, 'user.updated', { targetType:'user', targetId:target.id, metadata:{ before:auditUser(target), after:auditUser(updated), changedFields:Object.keys(req.body) } });
-  res.json({ user: sanitizeUser(updated) });
+  const accessGroups = accessGroupsForUser(target.id);
+  res.json({ user: sanitizeUser(updated), accessGroups, accessGroupCount:accessGroups.length });
 });
 
 router.delete('/users/:id', (req, res) => {

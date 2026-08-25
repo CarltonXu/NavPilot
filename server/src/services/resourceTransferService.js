@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const defaultDb = require("../db");
+const { createAccessControlService } = require("./accessControlService");
 
 function problem(code, message, status = 400) {
   return Object.assign(new Error(message), { code, status });
@@ -32,7 +33,7 @@ function itemRows(db, realmValue) {
   const current = normalizeRealm(realmValue);
   return db
     .prepare(
-      "SELECT id,name,url,icon,description,tags_json,category_id,sort_order,check_enabled,check_method,check_target FROM items WHERE scope=? AND owner_id IS ? ORDER BY sort_order,id",
+      "SELECT id,name,url,icon,description,tags_json,category_id,sort_order,check_enabled,check_method,check_target,visibility FROM items WHERE scope=? AND owner_id IS ? ORDER BY sort_order,id",
     )
     .all(current.scope, current.ownerId);
 }
@@ -106,7 +107,7 @@ function selectionSnapshot(
   );
   return {
     format: "navpilot",
-    version: 1,
+    version: 2,
     sourceScope: current.scope,
     exportedAt: new Date().toISOString(),
     categories: selectedCategories.map((row) => ({
@@ -134,6 +135,13 @@ function selectionSnapshot(
       checkEnabled: Boolean(row.check_enabled),
       checkMethod: row.check_method,
       checkTarget: row.check_target || "",
+      ...(current.scope === 'public' ? { access: {
+        visibility: row.visibility || 'public',
+        grants: [
+          ...db.prepare(`SELECT 'user' type,u.username identifier,g.expires_at_ms expiresAtMs FROM item_access_user_grants g JOIN users u ON u.id=g.user_id WHERE g.item_id=?`).all(row.id),
+          ...db.prepare(`SELECT 'group' type,a.name identifier,g.expires_at_ms expiresAtMs FROM item_access_group_grants g JOIN access_groups a ON a.id=g.group_id WHERE g.item_id=?`).all(row.id),
+        ],
+      }} : {}),
     })),
   };
 }
@@ -158,6 +166,7 @@ function normalizeNavpilot(payload) {
     }))
     .filter((row) => row.name);
   const keys = new Set(categories.map((row) => row.key));
+  const payloadVersion = Number(payload.version) || 1;
   const items = payload.items
     .slice(0, 10000)
     .map((row, index) => ({
@@ -179,9 +188,17 @@ function normalizeNavpilot(payload) {
         ? row.checkMethod
         : "none",
       checkTarget: String(row.checkTarget || "").slice(0, 500),
+      access: payloadVersion >= 2 && row.access ? {
+        visibility: ['public','authenticated','restricted'].includes(row.access.visibility) ? row.access.visibility : 'public',
+        grants: (Array.isArray(row.access.grants) ? row.access.grants : []).slice(0,200).map(grant => ({
+          type: grant?.type === 'group' ? 'group' : 'user',
+          identifier: String(grant?.identifier || '').trim().slice(0,120),
+          expiresAtMs: grant?.expiresAtMs == null ? null : Number(grant.expiresAtMs),
+        })).filter(grant => grant.identifier),
+      } : null,
     }))
     .filter((row) => row.name && row.url);
-  return { format: "navpilot", version: 1, categories, items };
+  return { format: "navpilot", version: payloadVersion >= 2 ? 2 : 1, categories, items };
 }
 
 function normalizeChrome(payload) {
@@ -235,6 +252,7 @@ function normalizeChrome(payload) {
 }
 
 function previewImport(db, realmValue, payload, format = "auto") {
+  const current = normalizeRealm(realmValue);
   const normalized =
     format === "chrome" || (format === "auto" && payload?.roots)
       ? normalizeChrome(payload)
@@ -249,7 +267,14 @@ function previewImport(db, realmValue, payload, format = "auto") {
     const fingerprint = item.url.toLowerCase(),
       duplicate = existing.has(fingerprint) || seen.has(fingerprint);
     seen.add(fingerprint);
-    return { ...item, duplicate };
+    if (current.scope !== 'public' || !item.access) return { ...item, duplicate };
+    const grants = item.access.grants.map((grant) => {
+      const principal = grant.type === 'group'
+        ? db.prepare('SELECT id,name displayName FROM access_groups WHERE name=? COLLATE NOCASE').get(grant.identifier)
+        : db.prepare("SELECT id,display_name displayName FROM users WHERE username=? COLLATE NOCASE AND status='active'").get(grant.identifier);
+      return { ...grant, mapped: Boolean(principal), mappedId: principal?.id || null, displayName: principal?.displayName || grant.identifier };
+    });
+    return { ...item, duplicate, access:{ ...item.access, grants }, accessBlocked:item.access.visibility==='restricted'&&!grants.some(grant=>grant.mapped&&(grant.expiresAtMs==null||grant.expiresAtMs>Date.now())) };
   });
   return {
     ...normalized,
@@ -257,6 +282,8 @@ function previewImport(db, realmValue, payload, format = "auto") {
       categories: normalized.categories.length,
       items: normalized.items.length,
       duplicates: normalized.items.filter((item) => item.duplicate).length,
+      unresolvedPrincipals: normalized.items.reduce((count,item)=>count+(item.access?.grants?.filter(grant=>grant.mapped===false).length||0),0),
+      blockedRestrictedItems: normalized.items.filter((item)=>item.accessBlocked).length,
     },
   };
 }
@@ -269,6 +296,7 @@ function importNormalized(
 ) {
   const current = normalizeRealm(realmValue),
     data = normalizeNavpilot(input),
+    access = createAccessControlService(db),
     selected = new Set(
       Array.isArray(selectedKeys)
         ? selectedKeys.map(String)
@@ -378,6 +406,20 @@ function importNormalized(
         current.scope,
         current.ownerId,
       ).lastInsertRowid);
+      if (current.scope === 'public') {
+        let itemAccess = data.version >= 2 && item.access ? item.access : access.inheritedCategoryAccess(categoryId);
+        if (itemAccess.grants?.length) {
+          itemAccess = { ...itemAccess, grants: itemAccess.grants.map(grant => {
+            const principal = grant.type === 'group'
+              ? db.prepare('SELECT id FROM access_groups WHERE name=? COLLATE NOCASE').get(grant.identifier)
+              : db.prepare("SELECT id FROM users WHERE username=? COLLATE NOCASE AND status='active'").get(grant.identifier);
+            return principal ? { type: grant.type, id: principal.id, expiresAtMs: grant.expiresAtMs } : null;
+          }).filter(Boolean) };
+        }
+        if (itemAccess.visibility === 'restricted' && !itemAccess.grants?.some(grant => grant.expiresAtMs == null || grant.expiresAtMs > Date.now()))
+          throw problem('RESTRICTED_PRINCIPAL_MAPPING_REQUIRED', `资源“${item.name}”的授权用户或组无法映射，已阻止导入`);
+        access.replaceItemAccess(importedId, itemAccess, null, { incrementVersion: false });
+      }
       importedIds.push(importedId);
       existing.add(fingerprint);
       imported += 1;

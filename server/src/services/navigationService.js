@@ -1,9 +1,9 @@
 const crypto = require("crypto");
 const defaultDb = require("../db");
 
-const selectItem = `SELECT items.id,items.name,items.url,items.icon,items.description,items.ai_summary,items.content_hash,items.content_analyzed_at_ms,items.tags_json,items.category_id,items.sort_order,items.click_count,items.status,items.latency_ms,items.last_checked_at,items.check_enabled,items.check_method,items.check_target,items.scope,items.owner_id,items.version,items.created_at,items.updated_at,categories.name AS category_name,categories.icon AS category_icon FROM items LEFT JOIN categories ON categories.id=items.category_id`;
+const selectItem = `SELECT items.id,items.name,items.url,items.icon,items.description,items.ai_summary,items.content_hash,items.content_analyzed_at_ms,items.tags_json,items.category_id,items.sort_order,items.click_count,items.status,items.latency_ms,items.last_checked_at,items.check_enabled,items.check_method,items.check_target,items.scope,items.owner_id,items.visibility,items.version,items.created_at,items.updated_at,categories.name AS category_name,categories.icon AS category_icon FROM items LEFT JOIN categories ON categories.id=items.category_id`;
 const selectCategory =
-  "SELECT id,name,icon,scope,owner_id,parent_id,sort_order,version,created_at,updated_at FROM categories";
+  "SELECT id,name,icon,scope,owner_id,parent_id,sort_order,version,default_visibility,created_at,updated_at FROM categories";
 
 function domainError(code, message, status = 400) {
   return Object.assign(new Error(message), { code, status });
@@ -63,6 +63,7 @@ function categorySnapshot(value) {
     name: value.name,
     icon: value.icon,
     scope: value.scope,
+    visibility: value.visibility || "public",
     parentId: value.parent_id ?? null,
     sortOrder: value.sort_order,
     depth: value.depth,
@@ -127,10 +128,17 @@ function assertVersion(value, expectedVersion) {
     throw domainError("ENTITY_STALE", "数据已发生变化，请刷新后重试", 409);
 }
 const CATEGORY_ICON_NAMES = new Set([
-  "folder","grid","star","bookmark","tag","link","globe","compass","home","layers",
-  "building","briefcase","users","calendar","mail","message","chart","target","shield","lock",
-  "code","terminal","database","server","cloud","network","cpu","monitor","mobile","tools",
-  "docs","book","image","video","music","download","upload","archive","package","lab",
+  "folder","grid","home","link","globe","compass","map","mapPin","star","bookmark","tag","layers","dashboard","menu","pin",
+  "building","briefcase","users","user","calendar","clock","mail","clipboard","listChecks","target","project","contact","printer",
+  "message","phone","headset","send","inbox","bell","megaphone","microphone","video","mobile","chatDots","atSign","share",
+  "code","terminal","gitBranch","bug","api","webhook","workflow","tools","puzzle","lab","braces","command","binary",
+  "database","server","cloud","network","wifi","router","hardDrive","container","boxes","cpu","monitor","memory","rack","storage",
+  "docs","file","fileText","book","newspaper","image","camera","music","archive","download","upload","package","pdf","spreadsheet","film",
+  "chart","barChart","pieChart","activity","gauge","table","filter","calculator","insights","search","lineChart","scatterChart","sigma",
+  "shield","shieldCheck","lock","key","eye","fingerprint","scan","firewall","certificate","alert","userCheck","shieldAlert","vault",
+  "wallet","creditCard","shoppingCart","store","receipt","dollar","bank","coins","truck","gift","percent","factory","handshake",
+  "palette","brush","pen","wand","lightbulb","rocket","shapes","scissors","presentation","sparkles","pencilRuler","swatch","frame",
+  "assistant","brain","bot","neural","aiChip","prompt","inputTokens","outputTokens","imageAi","vision","voiceAi","translate","agents","model","automation",
 ]);
 function normalizeCategoryIcon(value) {
   const icon=String(value||"icon:folder").trim();
@@ -439,7 +447,10 @@ function createNavigationService(db = defaultDb) {
         ? "none"
         : ["http", "tcp", "none"].includes(input.check_method)
           ? input.check_method
-          : "http";
+          : input.check_enabled === false || Number(input.check_enabled) === 0
+            ? "none"
+            : "http";
+    const checkEnabled = method !== "none";
     const max = db
       .prepare(
         "SELECT COALESCE(MAX(sort_order),-1) max FROM items WHERE scope=? AND owner_id IS ? AND category_id IS ?",
@@ -460,7 +471,7 @@ function createNavigationService(db = defaultDb) {
           max + 1,
           method,
           input.check_target || null,
-          input.check_enabled ? 1 : 0,
+          checkEnabled ? 1 : 0,
           current.scope,
           current.ownerId,
         ).lastInsertRowid,
@@ -484,10 +495,18 @@ function createNavigationService(db = defaultDb) {
         : getCategory(db, current, patch.category_id);
     const nextCategoryId = category?.id || null;
     const moved = nextCategoryId !== beforeValue.category_id;
-    const method =
+    let method =
       current.scope === "personal" && patch.check_method === "tcp"
         ? "none"
         : (patch.check_method ?? beforeValue.check_method);
+    // Keep compatibility with API/AI callers that still send only
+    // check_enabled, but store one unambiguous state in the database.
+    if (patch.check_method === undefined && patch.check_enabled !== undefined) {
+      method = patch.check_enabled
+        ? beforeValue.check_method === "none" ? "http" : beforeValue.check_method
+        : "none";
+    }
+    const checkEnabled = method !== "none";
     db.prepare(
       `UPDATE items SET name=?,url=?,icon=?,description=?,tags_json=?,category_id=?,check_method=?,check_target=?,check_enabled=?,version=version+1,updated_at=datetime('now') WHERE id=?`,
     ).run(
@@ -503,11 +522,7 @@ function createNavigationService(db = defaultDb) {
       patch.check_target === undefined
         ? beforeValue.check_target
         : patch.check_target,
-      patch.check_enabled === undefined
-        ? beforeValue.check_enabled
-        : patch.check_enabled
-          ? 1
-          : 0,
+      checkEnabled ? 1 : 0,
       beforeValue.id,
     );
     if (moved) {
@@ -714,4 +729,5 @@ module.exports = {
   categorySnapshot,
   changedFields,
   normalizeTags,
+  normalizeCategoryIcon,
 };

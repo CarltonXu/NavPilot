@@ -1,26 +1,11 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import { useI18n } from "../i18n/LocaleContext.jsx";
-import Icon, { ContentIcon } from "./Icon.jsx";
+import Icon from "./Icon.jsx";
+import VectorIconPicker from "./VectorIconPicker.jsx";
+import { AccessEditor } from "./AccessControl.jsx";
 
 import { flattenCategoryTree } from "../utils/categoryTree.js";
-
-const ICON_PRESETS = [
-  "🔗",
-  "🌐",
-  "💻",
-  "📊",
-  "📚",
-  "🛠️",
-  "📋",
-  "🐙",
-  "☁️",
-  "🧭",
-  "📈",
-  "🔒",
-  "📁",
-  "🚀",
-];
 
 export default function ItemFormModal({
   item,
@@ -35,15 +20,16 @@ export default function ItemFormModal({
   const [form, setForm] = useState({
     name: item?.name || "",
     url: item?.url || "",
-    icon: item?.icon || "🔗",
+    icon: item?.icon || "icon:link",
     description: item?.description || "",
     tagsText: Array.isArray(item?.tags) ? item.tags.join(", ") : "",
     category_id: item?.category_id ?? "",
     check_method: item?.check_method || "http",
     check_target: item?.check_target || "",
-    check_enabled: item?.check_enabled ?? 1,
   });
   const [error, setError] = useState("");
+  const [access,setAccess]=useState(isEdit?{visibility:item?.visibility||'public',grants:[]}:{inherit:true,visibility:'public',grants:[]});
+  const [accessLoading,setAccessLoading]=useState(isEdit&&scope==='public');
   const [saving, setSaving] = useState(false);
   const [metadataLoading, setMetadataLoading] = useState(false);
   const [metadataMessage, setMetadataMessage] = useState("");
@@ -64,6 +50,7 @@ export default function ItemFormModal({
           success: "已获取网站名称、描述和图标。",
           hint: "输入可访问的网址后，可自动获取网站名称、描述和图标。",
         };
+  useEffect(()=>{if(!isEdit||scope!=='public')return;let active=true;api.getItemAccess(item.id).then(value=>{if(active)setAccess(value);}).catch(err=>{if(active)setError(errorMessage(err));}).finally(()=>{if(active)setAccessLoading(false);});return()=>{active=false;};},[isEdit,item?.id,scope,errorMessage]);
   const update = (key, value) =>
     setForm((current) => ({ ...current, [key]: value }));
   function userUpdate(key, value) {
@@ -182,7 +169,10 @@ export default function ItemFormModal({
         ],
         category_id:
           submission.category_id === "" ? null : Number(submission.category_id),
-        check_enabled: submission.check_enabled ? 1 : 0,
+        // The method is the single source of truth: HTTP/TCP enables checking,
+        // while “none” disables it.
+        check_enabled: submission.check_method === "none" ? 0 : 1,
+        ...(scope==='public'&&!access.inherit?{access}:{})
       });
     } catch (err) {
       setError(errorMessage(err));
@@ -192,10 +182,25 @@ export default function ItemFormModal({
   }
   return (
     <div className="modal-mask" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>{t(isEdit ? "item.editTitle" : "item.addTitle")}</h3>
-        <p className="modal-sub">{t("item.description")}</p>
-        <form onSubmit={submit}>
+      <div
+        className={`modal item-form-modal ${scope === "public" ? "with-access" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="item-form-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="item-form-header">
+          <h3 id="item-form-title">
+            {t(isEdit ? "item.editTitle" : "item.addTitle")}
+          </h3>
+          <p className="modal-sub">{t("item.description")}</p>
+        </header>
+        <form className="item-form-shell" onSubmit={submit}>
+          <div className={`item-form-body ${scope === "public" ? "has-access" : ""}`}>
+          <section
+            className="item-form-main-panel"
+            aria-label={locale === "en" ? "Basic information" : "基本信息"}
+          >
           <div className="form-grid-2">
             <div className="form-row">
               <label>{t("item.name")}</label>
@@ -208,13 +213,18 @@ export default function ItemFormModal({
             <div className="form-row">
               <label>{t("item.icon")}</label>
               <div className="item-icon-control">
-                <span>
-                  <ContentIcon value={form.icon} size={20} />
-                </span>
+                <VectorIconPicker
+                  value={form.icon}
+                  onChange={(icon) => userUpdate("icon", icon)}
+                  label={t("item.icon")}
+                  allowCustom
+                  iconOnly
+                />
                 <input
                   value={form.icon}
                   onChange={(e) => userUpdate("icon", e.target.value)}
-                  placeholder="🔗"
+                  placeholder="https://example.com/favicon.ico"
+                  aria-label={`${t("item.icon")} URL`}
                 />
               </div>
             </div>
@@ -243,22 +253,6 @@ export default function ItemFormModal({
               className={`hint item-metadata-hint ${metadataMessage ? "success" : ""}`}
             >
               {metadataMessage || metadataWords.hint}
-            </div>
-          </div>
-          <div className="form-row">
-            <label>{t("item.quickIcon")}</label>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {ICON_PRESETS.map((icon) => (
-                <button
-                  type="button"
-                  key={icon}
-                  className="mini-btn"
-                  style={{ width: 30, height: 30, fontSize: 15 }}
-                  onClick={() => userUpdate("icon", icon)}
-                >
-                  {icon}
-                </button>
-              ))}
             </div>
           </div>
           <div className="form-row">
@@ -327,8 +321,41 @@ export default function ItemFormModal({
               <div className="hint">{t("item.checkHint")}</div>
             </div>
           )}
-          {error && <div className="error-text">{error}</div>}
-          <div className="modal-actions">
+          </section>
+          {scope === "public" && (
+            <aside
+              className="item-form-access-panel"
+              aria-labelledby="item-access-title"
+            >
+              <header>
+                <span><Icon name="shield" size={17} /></span>
+                <div>
+                  <h4 id="item-access-title">
+                    {locale === "en" ? "Visibility and access" : "可见范围与授权"}
+                  </h4>
+                  <p>
+                    {locale === "en"
+                      ? "Control who can find and open this public resource."
+                      : "控制哪些用户可以发现并访问这个公共资源。"}
+                  </p>
+                </div>
+              </header>
+              <div className="item-form-access-content">
+                {accessLoading ? (
+                  <div className="hint">{t("common.loading")}</div>
+                ) : (
+                  <AccessEditor
+                    value={access}
+                    onChange={setAccess}
+                    allowInherit={!isEdit}
+                  />
+                )}
+              </div>
+            </aside>
+          )}
+          </div>
+          {error && <div className="item-form-error error-text">{error}</div>}
+          <div className="modal-actions item-form-actions">
             {isEdit && (
               <button
                 type="button"

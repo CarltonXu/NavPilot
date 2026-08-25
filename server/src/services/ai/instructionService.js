@@ -1,5 +1,6 @@
 const { createNavigationService } = require("../navigationService");
 const { selectItems } = require("./resourceSelector");
+const { createAccessControlService } = require("../accessControlService");
 
 function hostname(value) {
   try {
@@ -14,10 +15,14 @@ function increment(map, key) {
   map.set(label, (map.get(label) || 0) + 1);
 }
 
-function executeResourceQuery(db, current, intent, locale = "zh-CN") {
+function executeResourceQuery(db, current, intent, locale = "zh-CN", actor = null) {
   const navigation = createNavigationService(db);
+  const access = createAccessControlService(db);
   const categories = navigation.listCategories(current);
-  const items = navigation.listItems(current);
+  const effectiveActor = actor || (current.scope === 'personal'
+    ? { id:current.ownerId, status:'active', role:'user' }
+    : { id:'system', status:'active', role:'admin' });
+  const items = access.filterVisibleItems(effectiveActor, navigation.listItems(current));
   const categoryById = new Map(categories.map((category) => [category.id, category]));
   const matches = selectItems(items, categories, intent.filters);
   const statusCounts = { online: 0, offline: 0, unknown: 0 };

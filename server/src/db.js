@@ -57,6 +57,7 @@ function createLatestSchema(db) {
       parent_id INTEGER REFERENCES categories(id) ON DELETE CASCADE,
       sort_order INTEGER NOT NULL DEFAULT 0,
       version INTEGER NOT NULL DEFAULT 1,
+      default_visibility TEXT CHECK(default_visibility IS NULL OR default_visibility IN ('public','authenticated','restricted')),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       CHECK((scope='public' AND owner_id IS NULL) OR (scope='personal' AND owner_id IS NOT NULL))
@@ -85,12 +86,66 @@ function createLatestSchema(db) {
       check_target TEXT,
       scope TEXT NOT NULL DEFAULT 'public' CHECK(scope IN ('public','personal')),
       owner_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+      visibility TEXT NOT NULL DEFAULT 'public' CHECK(visibility IN ('public','authenticated','restricted')),
       version INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       CHECK((scope='public' AND owner_id IS NULL) OR (scope='personal' AND owner_id IS NOT NULL))
     );
     CREATE INDEX IF NOT EXISTS items_realm_order_idx ON items(scope, owner_id, category_id, sort_order, id);
+    CREATE TABLE IF NOT EXISTS access_groups (
+      id TEXT PRIMARY KEY,
+      name TEXT COLLATE NOCASE NOT NULL UNIQUE,
+      description TEXT NOT NULL DEFAULT '',
+      version INTEGER NOT NULL DEFAULT 1,
+      created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS access_group_members (
+      group_id TEXT NOT NULL REFERENCES access_groups(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      added_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at_ms INTEGER NOT NULL,
+      PRIMARY KEY(group_id,user_id)
+    );
+    CREATE INDEX IF NOT EXISTS access_group_members_user_idx ON access_group_members(user_id,group_id);
+    CREATE TABLE IF NOT EXISTS item_access_group_grants (
+      item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+      group_id TEXT NOT NULL REFERENCES access_groups(id) ON DELETE CASCADE,
+      expires_at_ms INTEGER,
+      granted_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at_ms INTEGER NOT NULL,
+      PRIMARY KEY(item_id,group_id)
+    );
+    CREATE INDEX IF NOT EXISTS item_access_group_grants_group_idx ON item_access_group_grants(group_id,item_id,expires_at_ms);
+    CREATE TABLE IF NOT EXISTS item_access_user_grants (
+      item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at_ms INTEGER,
+      granted_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at_ms INTEGER NOT NULL,
+      PRIMARY KEY(item_id,user_id)
+    );
+    CREATE INDEX IF NOT EXISTS item_access_user_grants_user_idx ON item_access_user_grants(user_id,item_id,expires_at_ms);
+    CREATE TABLE IF NOT EXISTS category_access_group_defaults (
+      category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+      group_id TEXT NOT NULL REFERENCES access_groups(id) ON DELETE CASCADE,
+      expires_at_ms INTEGER,
+      PRIMARY KEY(category_id,group_id)
+    );
+    CREATE TABLE IF NOT EXISTS category_access_user_defaults (
+      category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at_ms INTEGER,
+      PRIMARY KEY(category_id,user_id)
+    );
+    CREATE TABLE IF NOT EXISTS access_control_state (
+      id INTEGER PRIMARY KEY CHECK(id=1),
+      revision INTEGER NOT NULL DEFAULT 1,
+      updated_at_ms INTEGER NOT NULL
+    );
+    INSERT OR IGNORE INTO access_control_state(id,revision,updated_at_ms) VALUES(1,1,0);
     CREATE TABLE IF NOT EXISTS user_favorites (
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
@@ -338,6 +393,7 @@ function createLatestSchema(db) {
     CREATE INDEX IF NOT EXISTS analytics_user_time_idx ON analytics_events(user_id,occurred_at_ms);
     CREATE INDEX IF NOT EXISTS resource_health_time_idx ON resource_health_events(checked_at_ms,status);
     CREATE INDEX IF NOT EXISTS resource_health_realm_time_idx ON resource_health_events(scope,owner_id,checked_at_ms);
+    CREATE INDEX IF NOT EXISTS resource_health_item_time_idx ON resource_health_events(item_id,checked_at_ms);
     CREATE INDEX IF NOT EXISTS audit_log_time_idx ON audit_log(created_at DESC);
     CREATE INDEX IF NOT EXISTS audit_log_action_idx ON audit_log(action,created_at DESC);
     CREATE INDEX IF NOT EXISTS sessions_lookup_idx ON sessions(token_hash, revoked_at);
@@ -602,6 +658,23 @@ function migrateCurrentSchema(db) {
         WHERE icon IS NULL OR trim(icon)='' OR icon NOT LIKE 'icon:%';
       `);
       db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(16)').run();
+    })();
+  }
+  if (!applied.has(17)) {
+    db.transaction(() => {
+      addColumnIfMissing(db, 'items', "visibility TEXT NOT NULL DEFAULT 'public' CHECK(visibility IN ('public','authenticated','restricted'))");
+      addColumnIfMissing(db, 'categories', "default_visibility TEXT CHECK(default_visibility IS NULL OR default_visibility IN ('public','authenticated','restricted'))");
+      createLatestSchema(db);
+      db.prepare("UPDATE items SET visibility='public' WHERE visibility IS NULL OR visibility NOT IN ('public','authenticated','restricted')").run();
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(17)').run();
+    })();
+  }
+  if (!applied.has(18)) {
+    db.transaction(() => {
+      // Administrators bypass resource ACLs, so retaining group membership only
+      // creates misleading authorization records in the management UI.
+      db.prepare("DELETE FROM access_group_members WHERE user_id IN (SELECT id FROM users WHERE role='admin')").run();
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(18)').run();
     })();
   }
 }

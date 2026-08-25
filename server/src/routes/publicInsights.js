@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { createNavigationService, realm } = require('../services/navigationService');
 const { getPublicInsightsSettings } = require('../services/settingsService');
+const { presentItem } = require('../services/itemPresentation');
 
 const router = express.Router();
 const DAY_MS = 86400000;
@@ -36,8 +37,9 @@ router.get('/',(req,res)=>{
   const to=Date.now(),from=to-(days-1)*DAY_MS;
   const navigation=createNavigationService(db),categories=navigation.listCategories(realm('public'));
   const categoryMap=new Map(categories.map(category=>[category.id,category]));
-  const resources=db.prepare(`SELECT id,name,url,description,icon,category_id categoryId,tags_json tagsJson,status,latency_ms latencyMs,last_checked_at lastCheckedAt,created_at createdAt FROM items WHERE scope='public' ORDER BY id`).all().map(row=>({...row,tags:safeTags(row.tagsJson)}));
-  const clicks=db.prepare(`SELECT occurred_at_ms occurredAt,item_id itemId,user_id userId,ip_prefix ipPrefix FROM analytics_events WHERE event_name='item.clicked' AND scope='public' AND occurred_at_ms>=? ORDER BY occurred_at_ms`).all(from);
+  const resources=db.prepare(`SELECT id,name,url,description,icon,category_id categoryId,tags_json tagsJson,status,latency_ms latencyMs,last_checked_at lastCheckedAt,created_at createdAt FROM items WHERE scope='public' AND visibility='public' ORDER BY id`).all().map(row=>({...row,tags:safeTags(row.tagsJson)}));
+  const resourceIds=new Set(resources.map(resource=>resource.id));
+  const clicks=db.prepare(`SELECT occurred_at_ms occurredAt,item_id itemId,user_id userId,ip_prefix ipPrefix FROM analytics_events WHERE event_name='item.clicked' AND scope='public' AND occurred_at_ms>=? ORDER BY occurred_at_ms`).all(from).filter(row=>resourceIds.has(row.itemId));
   const visitsByItem=new Map(),visitorsByItem=new Map(),lastOpenByItem=new Map(),accessDays=new Map();
   for (const click of clicks) {
     visitsByItem.set(click.itemId,(visitsByItem.get(click.itemId)||0)+1);
@@ -65,7 +67,7 @@ router.get('/',(req,res)=>{
   const searchEvents=db.prepare(`SELECT id,occurred_at_ms occurredAt,properties_json propertiesJson FROM analytics_events WHERE event_name='search.performed' AND occurred_at_ms>=? ORDER BY occurred_at_ms`).all(from).map(row=>({...row,properties:parseProperties(row)}));
   const publicSearches=searchEvents.filter(row=>Number(row.properties.publicResultCount)>0);
   const publicSearchIds=new Set(publicSearches.map(row=>row.id));
-  const searchClicks=db.prepare(`SELECT occurred_at_ms occurredAt,properties_json propertiesJson,scope FROM analytics_events WHERE event_name='search.result_clicked' AND occurred_at_ms>=? ORDER BY occurred_at_ms`).all(from).map(row=>({...row,properties:parseProperties(row)})).filter(row=>row.scope==='public'&&publicSearchIds.has(row.properties.searchEventId));
+  const searchClicks=db.prepare(`SELECT occurred_at_ms occurredAt,item_id itemId,properties_json propertiesJson,scope FROM analytics_events WHERE event_name='search.result_clicked' AND occurred_at_ms>=? ORDER BY occurred_at_ms`).all(from).map(row=>({...row,properties:parseProperties(row)})).filter(row=>row.scope==='public'&&resourceIds.has(row.itemId)&&publicSearchIds.has(row.properties.searchEventId));
   const clickedSearchIds=new Set(searchClicks.map(row=>row.properties.searchEventId));
   const clicksBySearch=new Map();searchClicks.forEach(row=>clicksBySearch.set(row.properties.searchEventId,(clicksBySearch.get(row.properties.searchEventId)||0)+1));
   const searchDays=new Map(),termMap=new Map();
@@ -76,11 +78,11 @@ router.get('/',(req,res)=>{
   });
   const terms=[...termMap.values()].filter(row=>row.searches>=settings.searchMinCount).sort((a,b)=>b.searches-a.searches||b.publicClicks-a.publicClicks||a.name.localeCompare(b.name)).slice(0,15);
 
-  const topResources=resources.map(resource=>{const category=categoryMap.get(resource.categoryId);return{
+  const topResources=resources.map(resource=>{const category=categoryMap.get(resource.categoryId);return presentItem({
     id:resource.id,name:resource.name,url:resource.url,description:resource.description,icon:resource.icon,categoryId:resource.categoryId,
     categoryName:category?.name||null,categoryPath:category?.path_label||category?.name||null,tags:resource.tags,status:resource.status,
     latencyMs:resource.latencyMs,visits:visitsByItem.get(resource.id)||0,uniqueVisitors:visitorsByItem.get(resource.id)?.size||0,lastOpenedAt:lastOpenByItem.get(resource.id)||null,
-  };}).filter(row=>row.visits>0).sort((a,b)=>b.visits-a.visits||b.uniqueVisitors-a.uniqueVisitors||a.name.localeCompare(b.name)).slice(0,12);
+  });}).filter(row=>row.visits>0).sort((a,b)=>b.visits-a.visits||b.uniqueVisitors-a.uniqueVisitors||a.name.localeCompare(b.name)).slice(0,12);
 
   const categoryCounts=new Map(),tagCounts=new Map();
   resources.forEach(resource=>{

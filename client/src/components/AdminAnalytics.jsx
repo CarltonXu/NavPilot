@@ -402,7 +402,7 @@ function TopResources({ data, onSelect }) {
           <div className="resource-hover-card">
             <header>
               <span>
-                <ContentIcon value={item.icon} size={19} />
+                <ContentIcon value={item.icon} cachedUrl={item.icon_cache_url} size={19} />
               </span>
               <div>
                 <strong>{item.name}</strong>
@@ -1996,7 +1996,7 @@ function AnalyticsDrawer({ detail, onClose, locale }) {
   );
 }
 
-export default function AdminAnalytics() {
+export default function AdminAnalytics({ refreshToken = 0 }) {
   const { t, errorMessage, locale } = useI18n();
   const [days, setDays] = useState(30);
   const [tab, setTab] = useState("overview");
@@ -2008,11 +2008,16 @@ export default function AdminAnalytics() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   useEffect(() => {
+    if (scope !== "personal") return;
+    let live = true;
     api
       .getAnalyticsUsers()
-      .then((result) => setOwners(result.items || []))
+      .then((result) => live && setOwners(result.items || []))
       .catch(() => {});
-  }, []);
+    return () => {
+      live = false;
+    };
+  }, [scope, refreshToken]);
   useEffect(() => {
     let live = true;
     setLoading(true);
@@ -2029,7 +2034,7 @@ export default function AdminAnalytics() {
     return () => {
       live = false;
     };
-  }, [days, scope, ownerId, errorMessage]);
+  }, [days, scope, ownerId, errorMessage, refreshToken]);
   const zh = locale !== "en";
   const copy = zh
     ? {
@@ -3207,7 +3212,7 @@ function AuditDrawer({ event, onClose }) {
   );
 }
 
-export function AuditTable() {
+export function AuditTable({ refreshToken = 0 }) {
   const { t, errorMessage } = useI18n();
   const [rows, setRows] = useState([]),
     [pagination, setPagination] = useState({
@@ -3238,7 +3243,7 @@ export function AuditTable() {
     return () => {
       live = false;
     };
-  }, [page, pageSize, errorMessage]);
+  }, [page, pageSize, errorMessage, refreshToken]);
   const first = pagination.total
       ? (pagination.page - 1) * pagination.pageSize + 1
       : 0,

@@ -1014,7 +1014,7 @@ export default function PublicInsights({
                     >
                       <i>{String(index + 1).padStart(2, "0")}</i>
                       <span className="public-resource-icon">
-                        <ContentIcon value={item.icon} size={25} />
+                        <ContentIcon value={item.icon} cachedUrl={item.icon_cache_url} size={25} />
                       </span>
                       <span className="public-resource-copy">
                         <b>{item.name}</b>

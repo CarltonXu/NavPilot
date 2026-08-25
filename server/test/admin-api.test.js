@@ -15,11 +15,31 @@ test('admin account operations protect administrators and audit responses pagina
   const member = await createUser({ username: 'member', displayName: 'Member', password: 'Strong-member-password', mustChangePassword: false });
   const adminSession = createSession(admin.id);
   createSession(member.id);
+  const engineeringGroupId = crypto.randomUUID(), operationsGroupId = crypto.randomUUID(), groupNow = Date.now();
+  db.prepare('INSERT INTO access_groups(id,name,description,created_by_user_id,created_at_ms,updated_at_ms) VALUES(?,?,?,?,?,?)')
+    .run(engineeringGroupId, 'Engineering', 'Product engineering', admin.id, groupNow, groupNow);
+  db.prepare('INSERT INTO access_groups(id,name,description,created_by_user_id,created_at_ms,updated_at_ms) VALUES(?,?,?,?,?,?)')
+    .run(operationsGroupId, 'Operations', 'Platform operations', admin.id, groupNow, groupNow);
+  db.prepare('INSERT INTO access_group_members(group_id,user_id,added_by_user_id,created_at_ms) VALUES(?,?,?,?)')
+    .run(engineeringGroupId, member.id, admin.id, groupNow);
 
   const categoryId = Number(db.prepare("INSERT INTO categories(name,scope,owner_id) VALUES(?,'personal',?)").run('Private', member.id).lastInsertRowid);
   const personalItemId = Number(db.prepare("INSERT INTO items(name,url,category_id,scope,owner_id) VALUES(?,?,?,'personal',?)").run('Private link', 'https://private.example', categoryId, member.id).lastInsertRowid);
   const publicItemId = db.prepare("SELECT id FROM items WHERE scope='public' ORDER BY id LIMIT 1").get().id;
+  const publicCategoryId = db.prepare("SELECT category_id categoryId FROM items WHERE id=?").get(publicItemId).categoryId;
   const now = Date.now();
+  db.prepare('INSERT INTO item_access_user_grants(item_id,user_id,expires_at_ms,granted_by_user_id,created_at_ms) VALUES(?,?,NULL,?,?)')
+    .run(publicItemId, member.id, admin.id, now);
+  db.prepare('INSERT INTO item_access_group_grants(item_id,group_id,expires_at_ms,granted_by_user_id,created_at_ms) VALUES(?,?,NULL,?,?)')
+    .run(publicItemId, engineeringGroupId, admin.id, now);
+  if (publicCategoryId != null) {
+    db.prepare('INSERT INTO category_access_user_defaults(category_id,user_id,expires_at_ms) VALUES(?,?,NULL)').run(publicCategoryId, member.id);
+    db.prepare('INSERT INTO category_access_group_defaults(category_id,group_id,expires_at_ms) VALUES(?,?,NULL)').run(publicCategoryId, engineeringGroupId);
+  }
+  db.prepare("INSERT INTO resource_health_events(item_id,item_name,scope,owner_id,status,latency_ms,checked_at_ms) VALUES(?,?,'public',NULL,'offline',NULL,?)")
+    .run(publicItemId, 'Public link', now - 10 * 60_000);
+  db.prepare("INSERT INTO resource_health_events(item_id,item_name,scope,owner_id,status,latency_ms,checked_at_ms) VALUES(?,?,'public',NULL,'online',180,?)")
+    .run(publicItemId, 'Public link', now - 5 * 60_000);
   db.prepare("INSERT INTO analytics_events(id,occurred_at_ms,event_name,user_id,item_id,category_id,scope,item_name,item_url,item_owner_id,properties_json) VALUES(?,?, 'item.clicked',?,?,?,?,?,?,?,'{}')")
     .run(crypto.randomUUID(), now, member.id, personalItemId, categoryId, 'personal', 'Private link', 'https://private.example', member.id);
   db.prepare("INSERT INTO analytics_events(id,occurred_at_ms,event_name,user_id,item_id,scope,country_code,city_name,city_source,item_name,item_url,properties_json) VALUES(?,?, 'item.clicked',?,?,?,?,?,?,?,?,'{}')")
@@ -47,10 +67,73 @@ test('admin account operations protect administrators and audit responses pagina
     return { response, body };
   }
 
+  let availabilityResult = await request('/api/admin/availability?days=30&scope=public');
+  assert.equal(availabilityResult.response.status, 200);
+  const availabilityItem = availabilityResult.body.items.find((item) => item.itemId === publicItemId);
+  assert.equal(availabilityItem.availability, 50);
+  assert.equal(availabilityItem.daily.length, 30);
+  assert.equal(availabilityItem.daily.at(-1).status, 'degraded');
+
+  availabilityResult = await request(`/api/items/${publicItemId}/availability?days=7`);
+  assert.equal(availabilityResult.response.status, 200);
+  assert.equal(availabilityResult.body.daily.length, 7);
+  assert.equal(availabilityResult.body.incidents.length, 1);
+  assert.equal(availabilityResult.body.incidents[0].recovered, true);
+
+  availabilityResult = await request('/api/items/availability-summaries', { method:'POST', body:JSON.stringify({ ids:[publicItemId], days:7 }) });
+  assert.equal(availabilityResult.response.status, 200);
+  assert.equal(availabilityResult.body.items[0].checks, 2);
+
   let result = await request(`/api/admin/users/${member.id}`);
   assert.equal(result.response.status, 200);
   assert.equal(result.body.user.username, 'member');
   assert.deepEqual(result.body.stats, { personalItems: 1, personalCategories: 1, activeSessions: 1, aiPlans: 1 });
+  assert.deepEqual(result.body.accessGroups.map((group) => group.id), [engineeringGroupId]);
+  assert.deepEqual(result.body.availableAccessGroups.map((group) => group.name), ['Engineering', 'Operations']);
+  assert.equal(result.body.authorization.directResources.length, 1);
+  assert.equal(result.body.authorization.groupResources.length, 1);
+  assert.equal(result.body.authorization.groupResources[0].groupName, 'Engineering');
+  assert.equal(result.body.authorization.summary.resourceCount, 1);
+  assert.equal(result.body.authorization.directCategories.length, publicCategoryId == null ? 0 : 1);
+  assert.equal(result.body.authorization.groupCategories.length, publicCategoryId == null ? 0 : 1);
+
+  result = await request('/api/admin/users');
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.find((user) => user.id === member.id).accessGroupCount, 1);
+
+  result = await request(`/api/admin/users/${member.id}`, { method:'PATCH', body:JSON.stringify({
+    displayName:'Member', role:'user', status:'active',
+    accessGroupIds:[operationsGroupId], expectedAccessGroupIds:[engineeringGroupId],
+  }) });
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(result.body.accessGroups.map((group) => group.id), [operationsGroupId]);
+  assert.deepEqual(db.prepare('SELECT group_id groupId FROM access_group_members WHERE user_id=?').all(member.id), [{ groupId:operationsGroupId }]);
+
+  result = await request(`/api/admin/access-groups/${operationsGroupId}`);
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(result.body.members.map((groupMember) => groupMember.id), [member.id]);
+
+  result = await request(`/api/admin/access-groups/${engineeringGroupId}`);
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.authorization.resources.length, 1);
+  assert.equal(result.body.authorization.categories.length, publicCategoryId == null ? 0 : 1);
+
+  result = await request(`/api/admin/access-groups/${engineeringGroupId}/members`, { method:'PUT', body:JSON.stringify({
+    userIds:[member.id, admin.id], expectedVersion:result.body.version,
+  }) });
+  assert.equal(result.response.status, 400);
+  assert.equal(result.body.code, 'ADMIN_GROUP_MEMBERSHIP_UNNECESSARY');
+
+  result = await request('/api/admin/access-principals');
+  assert.equal(result.response.status, 200);
+  assert.ok(result.body.users.some((candidate) => candidate.id === member.id));
+  assert.ok(!result.body.users.some((candidate) => candidate.id === admin.id));
+
+  result = await request(`/api/admin/users/${member.id}`, { method:'PATCH', body:JSON.stringify({
+    displayName:'Member', accessGroupIds:[engineeringGroupId], expectedAccessGroupIds:[engineeringGroupId],
+  }) });
+  assert.equal(result.response.status, 409);
+  assert.equal(result.body.code, 'VERSION_CONFLICT');
 
   result = await request('/api/admin/users', { method: 'POST', body: JSON.stringify({ username: '!', displayName: 'Invalid' }) });
   assert.equal(result.response.status, 400);

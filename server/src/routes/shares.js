@@ -113,6 +113,10 @@ router.post("/", (req, res) => {
         req.body.selection || {},
       ),
       created = [];
+    if (snapshot.items.some((item) => item.access?.visibility === 'restricted')) {
+      auditWith(db, req, 'share.restricted_denied', { outcome:'denied', targetType:'navigation_realm', metadata:{ sourceScope, itemCount:snapshot.items.length } });
+      throw Object.assign(new Error('指定范围资源不能复制到个人空间，请使用资源授权'), { code:'RESTRICTED_SHARE_FORBIDDEN', status:409 });
+    }
     db.transaction(() => {
       for (const identity of unique) {
         const user = db

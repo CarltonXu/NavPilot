@@ -1,5 +1,5 @@
 import React from 'react';
-import { cleanup, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LocaleProvider } from '../i18n/LocaleContext.jsx';
 import CategoryTree from './CategoryTree.jsx';
@@ -85,8 +85,22 @@ describe('CategoryTree editing', () => {
     const category={id:1,name:'研发',icon:'icon:code',parent_id:null,depth:1,sort_order:0};
     render(<LocaleProvider><CategoryTree categories={[category]} counts={{1:0}} active="all" manageable onCreate={vi.fn()} onRename={vi.fn()} onChangeIcon={onChangeIcon} onDelete={vi.fn()}/></LocaleProvider>);
     fireEvent.click(screen.getByRole('button',{name:'更换分类「研发」的图标'}));
-    fireEvent.click(screen.getByRole('button',{name:'选择图标 database'}));
-    fireEvent.click(screen.getByRole('button',{name:'确认'}));
+    const picker=screen.getByRole('dialog',{name:'选择图标'});
+    fireEvent.click(within(picker).getByRole('button',{name:/基础设施/}));
+    fireEvent.click(within(picker).getByRole('button',{name:/选择图标 数据库 Database/}));
+    fireEvent.click(within(picker).getByRole('button',{name:'确认'}));
     await waitFor(()=>expect(onChangeIcon).toHaveBeenCalledWith(category,'icon:database'));
+    await waitFor(()=>expect(screen.queryByRole('dialog',{name:'选择图标'})).toBeNull());
+  });
+
+  it('opens the icon picker directly and closes it with Escape', () => {
+    localStorage.setItem('navpilot_locale', 'zh-CN');
+    const category={id:1,name:'研发',icon:'icon:code',parent_id:null,depth:1,sort_order:0};
+    render(<LocaleProvider><CategoryTree categories={[category]} counts={{1:0}} active="all" manageable onCreate={vi.fn()} onRename={vi.fn()} onChangeIcon={vi.fn()} onDelete={vi.fn()}/></LocaleProvider>);
+    fireEvent.click(screen.getByRole('button',{name:'更换分类「研发」的图标'}));
+    expect(screen.getByRole('dialog',{name:'选择图标'})).toBeTruthy();
+    fireEvent.keyDown(window,{key:'Escape'});
+    expect(screen.queryByRole('dialog',{name:'选择图标'})).toBeNull();
+    expect(screen.queryByRole('dialog',{name:'更换图标'})).toBeNull();
   });
 });

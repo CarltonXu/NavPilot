@@ -5,6 +5,9 @@ const {getEmbeddingConfig,getSetting}=require('../services/settingsService');
 const {createNavigationService}=require('../services/navigationService');
 const {analytics}=require('../services/eventService');
 const crypto=require('crypto');
+const {presentItem}=require('../services/itemPresentation');
+const {createAccessControlService}=require('../services/accessControlService');
+const access=createAccessControlService(db);
 
 const router=express.Router();
 const semanticRequests=new Map();
@@ -25,13 +28,14 @@ function visibleCategoryPaths(userId){
   if(userId)categories.push(...navigation.listCategories({scope:'personal',ownerId:userId}));
   return new Map(categories.map(category=>[category.id,category.path_label||category.name]));
 }
-function visibleItems(userId){
+function visibleItems(actor){
+  const userId=actor?.id||null;
   const categoryPaths=visibleCategoryPaths(userId);
-  return db.prepare(`SELECT items.id,items.scope,items.owner_id AS ownerId,items.name,items.url,items.description,items.icon,items.tags_json AS tagsJson,items.status,items.latency_ms AS latencyMs,categories.id AS categoryId,categories.name AS categoryName,categories.icon AS categoryIcon FROM items LEFT JOIN categories ON categories.id=items.category_id WHERE items.scope='public' OR (items.scope='personal' AND items.owner_id=?)`).all(userId).map(row=>{const value={...row,categoryPath:categoryPaths.get(row.categoryId)||row.categoryName||null,tags:tags(row.tagsJson)};delete value.tagsJson;return value;});
+  return access.filterVisibleItems(actor,db.prepare(`SELECT items.id,items.scope,items.owner_id,items.owner_id AS ownerId,items.visibility,items.name,items.url,items.description,items.icon,items.tags_json AS tagsJson,items.status,items.latency_ms AS latencyMs,categories.id AS categoryId,categories.name AS categoryName,categories.icon AS categoryIcon FROM items LEFT JOIN categories ON categories.id=items.category_id`).all()).map(row=>{const value={...row,categoryPath:categoryPaths.get(row.categoryId)||row.categoryName||null,tags:tags(row.tagsJson)};delete value.tagsJson;delete value.owner_id;return value;});
 }
 router.get('/',async(req,res)=>{
   const startedAt=Date.now(),query=String(req.query.q||'').trim().slice(0,120);if(!query)return res.json([]);
-  const userId=req.auth?.user?.id||null,items=visibleItems(userId),semantic=new Map(),config=getEmbeddingConfig();let semanticAvailable=false;
+  const userId=req.auth?.user?.id||null,items=visibleItems(req.auth?.user),semantic=new Map(),config=getEmbeddingConfig();let semanticAvailable=false;
   if(config.enabled&&req.auth?.user&&req.query.semantic!=='0'&&allowSemantic(req.auth.user.id)){
     try{
       const publicScores=await embeddings.semanticScores({scope:'public',ownerId:null},query,userId),personalScores=userId&&getSetting('ai_personal_enabled','false')==='true'?await embeddings.semanticScores({scope:'personal',ownerId:userId},query,userId):new Map();
@@ -40,8 +44,8 @@ router.get('/',async(req,res)=>{
   }
   const threshold=semanticAvailable ? 0.23 : 0.01;
   const searchEventId=`search-${crypto.randomUUID()}`;
-  const results=items.map(item=>{const lexical=lexicalScore(item,query),semanticRaw=semantic.get(item.id)||0,semanticScore=Math.max(0,Math.min(1,(semanticRaw-.15)/.75)),score=semanticAvailable?(lexical*.58+semanticScore*.42):lexical;return{...item,score,matchType:semanticScore>lexical?'semantic':'lexical'};}).filter(item=>item.score>=threshold).sort((a,b)=>b.score-a.score||a.scope.localeCompare(b.scope)||a.name.localeCompare(b.name)).slice(0,50).map(({ownerId,score,...item})=>({...item,relevance:Number(score.toFixed(4)),searchEventId}));
-  const publicResultCount=results.filter(item=>item.scope==='public').length,personalResultCount=results.filter(item=>item.scope==='personal').length;
+  const results=items.map(item=>{const lexical=lexicalScore(item,query),semanticRaw=semantic.get(item.id)||0,semanticScore=Math.max(0,Math.min(1,(semanticRaw-.15)/.75)),score=semanticAvailable?(lexical*.58+semanticScore*.42):lexical;return{...item,score,matchType:semanticScore>lexical?'semantic':'lexical'};}).filter(item=>item.score>=threshold).sort((a,b)=>b.score-a.score||a.scope.localeCompare(b.scope)||a.name.localeCompare(b.name)).slice(0,50).map(({ownerId,score,...item})=>presentItem({...item,relevance:Number(score.toFixed(4)),searchEventId}));
+  const publicResultCount=results.filter(item=>item.scope==='public'&&item.visibility==='public').length,personalResultCount=results.filter(item=>item.scope==='personal').length;
   analytics(req,'search.performed',{surface:'global-search',eventId:searchEventId,properties:{term:analyticsTerm(query),resultCount:results.length,publicResultCount,personalResultCount,latencyMs:Date.now()-startedAt,semanticAvailable}});
   res.json(results);
 });
