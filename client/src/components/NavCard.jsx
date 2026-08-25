@@ -172,7 +172,7 @@ export default function NavCard({
           </div>
           <span className="overview-resource-signals">
             <StatusPill status={item.status} latencyMs={item.latency_ms} checking={checking} />
-            {monitoringEnabled ? <AvailabilityStrip value={availability} onOpen={onShowAvailability} className="nav-card-availability overview-availability" /> : null}
+            {monitoringEnabled ? <AvailabilityStrip value={availability} onOpen={onShowAvailability} className="nav-card-availability overview-availability" displayDays={7} /> : null}
             <small>👆 {item.click_count || 0}</small>
           </span>
         </a>
@@ -219,7 +219,7 @@ export default function NavCard({
           </span>
           <span className="nav-list-status">
             <StatusPill status={item.status} latencyMs={item.latency_ms} checking={checking} />
-            {monitoringEnabled ? <AvailabilityStrip value={availability} onOpen={onShowAvailability} className="nav-card-availability compact-availability" /> : null}
+            {monitoringEnabled ? <AvailabilityStrip value={availability} onOpen={onShowAvailability} className="nav-card-availability compact-availability" displayDays={14} /> : null}
           </span>
           <span className="click-count">{item.click_count || 0}</span>
         </a>

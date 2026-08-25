@@ -1081,7 +1081,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
           onToggleFavorite={() => toggleFavorite(item)}
           onCopied={() => toastMessage(locale === "en" ? "Link copied" : "链接已复制")}
           availability={availability.get(item.id)}
-          onShowAvailability={() => setAvailabilityItem(item)}
+          onShowAvailability={(date) => setAvailabilityItem({ ...item, initialAvailabilityDate:date || null })}
         />
       ))}
     </div>
@@ -1468,6 +1468,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       {availabilityItem && (
         <AvailabilityDetailModal
           item={availabilityItem}
+          initialDate={availabilityItem.initialAvailabilityDate}
           canCheck={canConfigureItems}
           onClose={() => setAvailabilityItem(null)}
           onCheck={async () => { await api.checkItem(availabilityItem.id); await load(); }}

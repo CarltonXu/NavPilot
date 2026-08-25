@@ -99,9 +99,13 @@ describe('NavCard context menu', () => {
     expect(screen.getByText('等待首次检测')).toBeTruthy();
   });
 
-  it.each(['compact','overview'])('shows monitoring with no history in %s mode', (viewMode) => {
+  it.each([
+    ['compact', 14],
+    ['overview', 7],
+  ])('shows a readable monitoring range in %s mode', (viewMode, expectedDays) => {
     const result = renderCard({ item:{...item,check_enabled:1}, availability:{ state:'unknown', availability:null, checks:0, daily:Array.from({length:30},(_,index)=>({date:String(index),status:'unknown',checks:0})) }, viewMode });
-    expect(result.container.querySelectorAll('.nav-card-availability .availability-bars>i')).toHaveLength(30);
+    expect(result.container.querySelectorAll('.nav-card-availability .availability-bars>i')).toHaveLength(expectedDays);
+    expect(result.container.querySelector('.availability-bars').style.getPropertyValue('--availability-bars')).toBe(String(expectedDays));
     expect(result.container.querySelector('.nav-card-availability .availability-state.unknown')).toBeTruthy();
   });
 });

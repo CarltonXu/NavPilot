@@ -2,7 +2,7 @@ const DAY_MS = 86400000;
 const DEGRADED_LATENCY_MS = Math.max(250, Number(process.env.AVAILABILITY_DEGRADED_MS) || 1500);
 
 function clampDays(value) {
-  return [7, 30, 90].includes(Number(value)) ? Number(value) : 30;
+  return [7, 15, 30, 90].includes(Number(value)) ? Number(value) : 30;
 }
 
 function utcDay(timestamp) {
@@ -133,4 +133,25 @@ function availabilityForItems(db, items, options = {}) {
   return items.map((item) => summarize(item, byItem.get(item.id) || [], selectedPeriod.days, now, Boolean(options.includeDetails)));
 }
 
-module.exports = { availabilityForItems, clampDays, DEGRADED_LATENCY_MS };
+function availabilityDayForItem(db, item, date) {
+  const from = Date.parse(`${date}T00:00:00Z`);
+  const to = from + DAY_MS;
+  const events = db.prepare(`SELECT item_id itemId,status,latency_ms latencyMs,checked_at_ms checkedAtMs
+    FROM resource_health_events WHERE item_id=? AND checked_at_ms>=? AND checked_at_ms<?
+    ORDER BY checked_at_ms`).all(item.id, from, to);
+  const summary = summarize(item, events, [date], Math.min(Date.now(), to), true);
+  const bucket = summary.daily[0];
+  return {
+    ...summary,
+    date,
+    status:bucket.status,
+    state:bucket.status,
+    availability:bucket.availability,
+    averageLatencyMs:bucket.averageLatencyMs,
+    checks:bucket.checks,
+    events:[...events].reverse(),
+    incidents:incidents(events, Math.min(Date.now(), to)),
+  };
+}
+
+module.exports = { availabilityForItems, availabilityDayForItem, clampDays, DEGRADED_LATENCY_MS };
