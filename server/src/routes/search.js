@@ -29,13 +29,24 @@ function visibleCategoryPaths(userId){
   return new Map(categories.map(category=>[category.id,category.path_label||category.name]));
 }
 function visibleItems(actor){
-  const userId=actor?.id||null;
+  // Global search is deliberately scoped to the caller's two searchable realms:
+  // the shared public space and (when authenticated) their own personal space.
+  // Keep this restriction in SQL before ACL filtering so administrators cannot
+  // accidentally search another user's personal workspace through this endpoint.
+  const userId=access.isAuthenticated(actor)?actor.id:null;
   const categoryPaths=visibleCategoryPaths(userId);
-  return access.filterVisibleItems(actor,db.prepare(`SELECT items.id,items.scope,items.owner_id,items.owner_id AS ownerId,items.visibility,items.name,items.url,items.description,items.icon,items.tags_json AS tagsJson,items.status,items.latency_ms AS latencyMs,categories.id AS categoryId,categories.name AS categoryName,categories.icon AS categoryIcon FROM items LEFT JOIN categories ON categories.id=items.category_id`).all()).map(row=>{const value={...row,categoryPath:categoryPaths.get(row.categoryId)||row.categoryName||null,tags:tags(row.tagsJson)};delete value.tagsJson;delete value.owner_id;return value;});
+  const realmSql=userId
+    ? `(items.scope='public' OR (items.scope='personal' AND items.owner_id=?))`
+    : `items.scope='public'`;
+  const rows=db.prepare(`SELECT items.id,items.scope,items.owner_id,items.owner_id AS ownerId,items.visibility,items.name,items.url,items.description,items.icon,items.tags_json AS tagsJson,items.status,items.latency_ms AS latencyMs,categories.id AS categoryId,categories.name AS categoryName,categories.icon AS categoryIcon
+    FROM items
+    LEFT JOIN categories ON categories.id=items.category_id
+    WHERE ${realmSql}`).all(...(userId?[userId]:[]));
+  return access.filterVisibleItems(actor,rows).map(row=>{const value={...row,categoryPath:categoryPaths.get(row.categoryId)||row.categoryName||null,tags:tags(row.tagsJson)};delete value.tagsJson;delete value.owner_id;return value;});
 }
 router.get('/',async(req,res)=>{
   const startedAt=Date.now(),query=String(req.query.q||'').trim().slice(0,120);if(!query)return res.json([]);
-  const userId=req.auth?.user?.id||null,items=visibleItems(req.auth?.user),semantic=new Map(),config=getEmbeddingConfig();let semanticAvailable=false;
+  const userId=access.isAuthenticated(req.auth?.user)?req.auth.user.id:null,items=visibleItems(req.auth?.user),semantic=new Map(),config=getEmbeddingConfig();let semanticAvailable=false;
   if(config.enabled&&req.auth?.user&&req.query.semantic!=='0'&&allowSemantic(req.auth.user.id)){
     try{
       const publicScores=await embeddings.semanticScores({scope:'public',ownerId:null},query,userId),personalScores=userId&&getSetting('ai_personal_enabled','false')==='true'?await embeddings.semanticScores({scope:'personal',ownerId:userId},query,userId):new Map();

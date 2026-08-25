@@ -48,6 +48,29 @@ test("global search returns and searches complete category paths", async (t) => 
     url: "https://search-path-personal.example",
     category_id: personalLeaf.id,
   }).value;
+  const foreign = await createUser({
+    username: "search-path-foreign",
+    displayName: "Search Path Foreign",
+    password: "Strong-search-path-foreign-password",
+    mustChangePassword: false,
+  });
+  const foreignItem = navigation.createItem(realm("personal", foreign.id), {
+    name: "Foreign Private Reference",
+    url: "https://search-path-foreign.example",
+  }).value;
+  const admin = await createUser({
+    username: "search-path-admin",
+    displayName: "Search Path Admin",
+    password: "Strong-search-path-admin-password",
+    role: "admin",
+    mustChangePassword: false,
+  });
+  const adminSession = createSession(admin.id);
+  const deletedItem = navigation.createItem(realm("public"), {
+    name: "Deleted Search Record",
+    url: "https://search-path-deleted.example",
+  }).value;
+  navigation.deleteItem(realm("public"), deletedItem.id);
 
   const server = createApp().listen(0);
   await new Promise((resolve) => server.once("listening", resolve));
@@ -76,8 +99,23 @@ test("global search returns and searches complete category paths", async (t) => 
 
   results = await search("SearchPathPrivate");
   assert.equal(results.some((item) => item.id === personalItem.id), false);
+
+  // A signed-in user may search public resources and their own personal space,
+  // but must never discover another user's personal resources.
+  results = await search("Foreign Private Reference", session.rawToken);
+  assert.equal(results.some((item) => item.id === foreignItem.id), false);
+
+  // The same realm boundary applies to administrators on the global-search
+  // surface; admin management pages remain the place for cross-user inspection.
+  results = await search("Foreign Private Reference", adminSession.rawToken);
+  assert.equal(results.some((item) => item.id === foreignItem.id), false);
+
+  // Deleting an item removes it from the live items table, so historical
+  // snapshots/analytics must not make it searchable again.
+  results = await search("Deleted Search Record", session.rawToken);
+  assert.equal(results.some((item) => item.id === deletedItem.id), false);
   const tracked = db.prepare("SELECT COUNT(*) count FROM analytics_events WHERE event_name='search.performed'").get().count;
-  assert.equal(tracked, 3);
+  assert.equal(tracked, 6);
   const searchProperties=db.prepare("SELECT properties_json FROM analytics_events WHERE event_name='search.performed'").all().map(row=>JSON.parse(row.properties_json));
   assert.equal(searchProperties.some(value=>value.publicResultCount===1&&value.personalResultCount===0),true);
   assert.equal(searchProperties.some(value=>value.publicResultCount===0&&value.personalResultCount===1),true);

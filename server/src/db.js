@@ -81,6 +81,9 @@ function createLatestSchema(db) {
       status TEXT NOT NULL DEFAULT 'unknown' CHECK(status IN ('online','offline','unknown')),
       latency_ms INTEGER,
       last_checked_at TEXT,
+      alert_failure_count INTEGER NOT NULL DEFAULT 0,
+      alert_active INTEGER NOT NULL DEFAULT 0,
+      alert_last_triggered_at_ms INTEGER,
       check_enabled INTEGER NOT NULL DEFAULT 1,
       check_method TEXT NOT NULL DEFAULT 'http' CHECK(check_method IN ('http','tcp','none')),
       check_target TEXT,
@@ -333,6 +336,51 @@ function createLatestSchema(db) {
       payload_json TEXT NOT NULL DEFAULT '{}',
       read_at_ms INTEGER,
       created_at_ms INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS alert_channels (
+      id TEXT PRIMARY KEY,
+      owner_type TEXT NOT NULL CHECK(owner_type IN ('user','space')),
+      owner_id TEXT NOT NULL,
+      type TEXT NOT NULL CHECK(type IN ('email','webhook')),
+      name TEXT NOT NULL,
+      config_json TEXT NOT NULL DEFAULT '{}',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS alert_channels_owner_idx ON alert_channels(owner_type,owner_id,enabled);
+    CREATE TABLE IF NOT EXISTS alert_policies (
+      id TEXT PRIMARY KEY,
+      owner_type TEXT NOT NULL CHECK(owner_type IN ('user','space')),
+      owner_id TEXT NOT NULL,
+      failure_threshold INTEGER NOT NULL DEFAULT 3,
+      cooldown_minutes INTEGER NOT NULL DEFAULT 30,
+      notify_recovery INTEGER NOT NULL DEFAULT 1,
+      title_template TEXT NOT NULL DEFAULT '[NavPilot] {status} · {resource}',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      UNIQUE(owner_type,owner_id)
+    );
+    CREATE TABLE IF NOT EXISTS alert_events (
+      id TEXT PRIMARY KEY,
+      owner_type TEXT NOT NULL CHECK(owner_type IN ('user','space')),
+      owner_id TEXT NOT NULL,
+      item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL CHECK(event_type IN ('down','recovered')),
+      status TEXT NOT NULL,
+      message TEXT NOT NULL,
+      created_at_ms INTEGER NOT NULL,
+      resolved_at_ms INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS alert_events_owner_time_idx ON alert_events(owner_type,owner_id,created_at_ms DESC);
+    CREATE TABLE IF NOT EXISTS alert_deliveries (
+      id TEXT PRIMARY KEY,
+      event_id TEXT NOT NULL REFERENCES alert_events(id) ON DELETE CASCADE,
+      channel_id TEXT NOT NULL REFERENCES alert_channels(id) ON DELETE CASCADE,
+      status TEXT NOT NULL CHECK(status IN ('sent','failed')),
+      error TEXT,
+      attempted_at_ms INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS ai_usage_events (
       id TEXT PRIMARY KEY,
@@ -675,6 +723,21 @@ function migrateCurrentSchema(db) {
       // creates misleading authorization records in the management UI.
       db.prepare("DELETE FROM access_group_members WHERE user_id IN (SELECT id FROM users WHERE role='admin')").run();
       db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(18)').run();
+    })();
+  }
+  if (!applied.has(19)) {
+    db.transaction(() => {
+      addColumnIfMissing(db, 'items', 'alert_failure_count INTEGER NOT NULL DEFAULT 0');
+      addColumnIfMissing(db, 'items', 'alert_active INTEGER NOT NULL DEFAULT 0');
+      addColumnIfMissing(db, 'items', 'alert_last_triggered_at_ms INTEGER');
+      createLatestSchema(db);
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(19)').run();
+    })();
+  }
+  if (!applied.has(20)) {
+    db.transaction(() => {
+      addColumnIfMissing(db, 'alert_policies', "title_template TEXT NOT NULL DEFAULT '[NavPilot] {status} · {resource}'");
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(20)').run();
     })();
   }
 }

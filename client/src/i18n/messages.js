@@ -66,7 +66,7 @@ Object.assign(messages['zh-CN'].category.iconGroup, {
 Object.assign(messages['zh-CN'].admin, { availability:'可用性监控' });
 Object.assign(messages.en.admin, { availability:'Availability' });
 Object.assign(messages['zh-CN'].category, { favorites:'我的收藏' });
-Object.assign(messages['zh-CN'].admin, { accessGroups:'授权组' });
+Object.assign(messages['zh-CN'].admin, { accessGroups:'授权组', alerts:'公共空间告警' });
 Object.assign(messages['zh-CN'].admin, {
   accessGroupMembership:'所属授权组',
   accessGroupMembershipDesc:'勾选账户需要加入的授权组，保存后将同步影响公共资源访问范围。',
@@ -92,7 +92,7 @@ Object.assign(messages.en.category.iconGroup, {
   commerce:'Commerce', creative:'Creative', ai:'AI',
 });
 Object.assign(messages.en.category, { favorites:'Favorites' });
-Object.assign(messages.en.admin, { accessGroups:'Access Groups' });
+Object.assign(messages.en.admin, { accessGroups:'Access Groups', alerts:'Public alerts' });
 Object.assign(messages.en.admin, {
   accessGroupMembership:'Access group membership',
   accessGroupMembershipDesc:'Select the groups this account belongs to. Saving updates public-resource access immediately.',

@@ -4,6 +4,7 @@ import { useAuth } from "../auth/AuthContext.jsx";
 import { useI18n } from "../i18n/LocaleContext.jsx";
 import Icon from "./Icon.jsx";
 import AvatarCropper from "./AvatarCropper.jsx";
+import AlertSettings from "./AlertSettings.jsx";
 
 const copy = {
   "zh-CN": {
@@ -15,6 +16,8 @@ const copy = {
     preferencesDesc: "作为没有本地选择时的默认值；当前浏览器的手动调整优先保留",
     security: "账户安全",
     securityDesc: "定期更新密码可以提高账户安全性",
+    alerts: "告警通知",
+    alertsDesc: "配置个人空间的 Email 或 Webhook 告警",
     username: "用户名",
     immutable: "用户名是唯一登录标识，注册后不可修改",
     displayName: "显示名",
@@ -48,6 +51,8 @@ const copy = {
     preferencesDesc: "Defaults for browsers without local choices; manual choices in this browser take priority",
     security: "Security",
     securityDesc: "Keep your account secure with a strong password",
+    alerts: "Alert notifications",
+    alertsDesc: "Configure Email or Webhook alerts for My Space",
     username: "Username",
     immutable: "Your unique sign-in name cannot be changed",
     displayName: "Display name",
@@ -163,11 +168,13 @@ export default function UserProfileModal({ onClose }) {
     ["profile", "user", c.profile],
     ["preferences", "settings", c.preferences],
     ["security", "shield", c.security],
+    ["alerts", "bell", c.alerts],
   ];
   const descriptions = {
     profile: c.profileDesc,
     preferences: c.preferencesDesc,
     security: c.securityDesc,
+    alerts: c.alertsDesc,
   };
   return createPortal(
     <div
@@ -399,6 +406,7 @@ export default function UserProfileModal({ onClose }) {
                 </div>
               </div>
             )}
+            {tab === "alerts" && <AlertSettings scope="personal" defaultEmail={auth.user.email || ""} />}
             {error && <div className="error-text">{error}</div>}
             {saved && <div className="settings-saved">{saved}</div>}
           </section>
@@ -407,14 +415,14 @@ export default function UserProfileModal({ onClose }) {
           <button className="icon-btn" onClick={onClose} disabled={busy}>
             {t("common.cancel")}
           </button>
-          <button
+          {tab !== "alerts" && <button
             className="icon-btn primary"
             disabled={busy}
             onClick={tab === "security" ? change : save}
           >
             <Icon name={tab === "security" ? "shield" : "check"} size={15} />
             {busy ? t("common.saving") : tab === "security" ? c.change : c.save}
-          </button>
+          </button>}
         </footer>
       </div>
       {avatarFile&&<AvatarCropper file={avatarFile} locale={locale} busy={busy} onCancel={()=>!busy&&setAvatarFile(null)} onConfirm={uploadAvatar}/>}

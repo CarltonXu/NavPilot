@@ -15,6 +15,7 @@ const publicInsightsRouter = require('./routes/publicInsights');
 const sharesRouter = require('./routes/shares');
 const transferRouter = require('./routes/transfer');
 const workspaceRouter = require('./routes/workspace');
+const alertsRouter = require('./routes/alerts');
 const { optionalSession } = require('./middleware/auth');
 const { bootstrapAdmin } = require('./services/authService');
 const { cleanupSessions } = require('./services/sessionService');
@@ -63,6 +64,7 @@ function createApp() {
   app.use('/api/shares', sharesRouter);
   app.use('/api/transfer', transferRouter);
   app.use('/api/workspace', workspaceRouter);
+  app.use('/api/alerts', alertsRouter);
   app.get('/api/health', (req, res) => res.json({ ok: true, geoIp:getGeoStatus() }));
   app.use('/uploads', express.static(require('./services/uploadService').getUploadRoot(), {
     index:false,

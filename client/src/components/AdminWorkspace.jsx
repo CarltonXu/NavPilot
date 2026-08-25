@@ -11,6 +11,7 @@ import ThemeSwitcher from "./ThemeSwitcher.jsx";
 import LocaleSwitcher from "./LocaleSwitcher.jsx";
 import Icon from "./Icon.jsx";
 import { normalizeBrandImage } from "../utils/imageProcessing.js";
+import AlertSettings from "./AlertSettings.jsx";
 
 const tabs = [
   ["analytics", "grid", "analytics.title"],
@@ -20,6 +21,7 @@ const tabs = [
   ["access", "users", "admin.accessGroups"],
   ["general", "settings", "settings.generalTitle"],
   ["ai", "assistant", "settings.aiMenu"],
+  ["alerts", "bell", "admin.alerts"],
 ];
 export const ADMIN_TAB_CACHE_TTL_MS = 60_000;
 
@@ -658,6 +660,11 @@ export default function AdminWorkspace({
         {loadedTabs.has("ai") && (
           <section className="admin-tab-panel" hidden={tab !== "ai"}>
             <AiSettingsPanel refreshToken={refreshTokens.ai || 0} />
+          </section>
+        )}
+        {loadedTabs.has("alerts") && (
+          <section className="admin-tab-panel" hidden={tab !== "alerts"}>
+            <AlertSettings scope="public" />
           </section>
         )}
       </main>

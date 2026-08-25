@@ -2,6 +2,7 @@ const axios = require('axios');
 const net = require('net');
 const { URL } = require('url');
 const db = require('../db');
+const { processCheckAlert } = require('./alertService');
 
 const TIMEOUT_MS = parseInt(process.env.CHECK_TIMEOUT_MS || '5000', 10);
 
@@ -80,6 +81,7 @@ async function checkAndPersist(item, options = {}) {
     db.prepare(`UPDATE items SET status = ?, latency_ms = ?, last_checked_at = datetime('now') WHERE id = ?`).run(result.status, result.latencyMs, item.id);
     db.prepare(`INSERT INTO resource_health_events(item_id,item_name,scope,owner_id,status,latency_ms,checked_at_ms) VALUES(?,?,?,?,?,?,?)`).run(item.id,item.name,item.scope,item.owner_id||null,result.status,result.latencyMs,Date.now());
   })();
+  await processCheckAlert(item, result);
   return result;
 }
 
