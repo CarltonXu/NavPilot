@@ -11,8 +11,22 @@ process.env.NAVPILOT_UPLOAD_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'navpilo
 const { createApp } = require('../src/index');
 const { createUser } = require('../src/services/authService');
 const { createSession } = require('../src/services/sessionService');
+const { getUploadRoot } = require('../src/services/uploadService');
 
 const PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+G4o2NwAAAABJRU5ErkJggg==';
+
+test('default upload root is persistent when no database path is configured', () => {
+  const uploadDirectory = process.env.NAVPILOT_UPLOAD_DIR;
+  const databasePath = process.env.NAVPILOT_DB_PATH;
+  delete process.env.NAVPILOT_UPLOAD_DIR;
+  delete process.env.NAVPILOT_DB_PATH;
+  try {
+    assert.equal(getUploadRoot(), path.resolve(__dirname, '..', 'data', 'uploads'));
+  } finally {
+    process.env.NAVPILOT_UPLOAD_DIR = uploadDirectory;
+    process.env.NAVPILOT_DB_PATH = databasePath;
+  }
+});
 
 test('admins upload branding images and users upload only their own avatar', async (t) => {
   const admin = await createUser({ username:'uploadadmin',displayName:'Upload Admin',password:'strong-password-1',role:'admin',mustChangePassword:false });

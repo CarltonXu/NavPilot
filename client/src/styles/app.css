@@ -860,21 +860,32 @@
 .alert-history-row strong,.alert-history-row small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .alert-history-row strong { font-size:10px; }
 .alert-history-row small { color:var(--text-tertiary); font:9px var(--font-mono); }
-.nav-card-monitoring .nav-card-availability {
+.nav-card-monitoring .nav-card-availability.interactive {
   width: 100%;
+  max-width: 100%;
   min-width: 0;
-  margin: 0;
+  margin: -7px 0;
+  padding-inline: 8px;
   gap: 5px;
 }
 .nav-card-monitoring .nav-card-availability .availability-strip-head,
-.nav-card-monitoring .nav-card-availability .availability-strip-foot { display: flex; }
+.nav-card-monitoring .nav-card-availability .availability-strip-foot {
+  width: 100%;
+  display: flex;
+}
 .nav-card-monitoring .nav-card-availability .availability-strip-head > strong { font-size: 10px; }
 .nav-card-monitoring .nav-card-availability .availability-strip-foot { margin-top: 1px; }
 .nav-card-monitoring .nav-card-availability .availability-bars {
+  width: 100%;
+  max-width: none;
+  margin-inline: auto;
   height: 18px;
+  /* Keep every probe bar the same width. The available card width is
+     absorbed by the spaces between bars, so sidebar resizing never changes
+     the bar geometry itself. */
   grid-template-columns: repeat(var(--availability-bars), 6px);
-  justify-content: start;
-  column-gap: 2.88px;
+  justify-content: space-between;
+  column-gap: 0;
   row-gap: 0;
 }
 .nav-card-monitoring .nav-card-availability .availability-bars > i {

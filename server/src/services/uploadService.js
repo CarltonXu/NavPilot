@@ -17,8 +17,13 @@ function uploadError(code, message, status = 400) {
 function getUploadRoot() {
   if (process.env.NAVPILOT_UPLOAD_DIR) return path.resolve(process.env.NAVPILOT_UPLOAD_DIR);
   const databasePath = process.env.NAVPILOT_DB_PATH;
-  if (!databasePath || databasePath === ':memory:') return path.join(os.tmpdir(), `navpilot-uploads-${process.pid}`);
-  return path.join(path.dirname(path.resolve(databasePath)), 'uploads');
+  // Keep in-memory test databases isolated, but make the application's default
+  // database and uploads share the same persistent server/data directory.
+  if (databasePath === ':memory:') return path.join(os.tmpdir(), `navpilot-uploads-${process.pid}`);
+  const dataDirectory = databasePath
+    ? path.dirname(path.resolve(databasePath))
+    : path.resolve(__dirname, '..', '..', 'data');
+  return path.join(dataDirectory, 'uploads');
 }
 
 function decodeImageDataUrl(value) {
