@@ -17,6 +17,7 @@ services:
       NODE_ENV: "${NAVPILOT_NODE_ENV:-production}"
       PORT: "8787"
       NAVPILOT_DB_PATH: /app/server/data/navpilot.db
+      NAVPILOT_ENABLE_CRON: "${NAVPILOT_ENABLE_CRON:-true}"
       NAVPILOT_GEOIP_DB_PATH: /app/geoip/GeoLite2-Country.mmdb
       NAVPILOT_GEOIP_CITY_DB_PATH: /app/geoip/geolite2-city-ipv4.mmdb
     volumes:
@@ -36,5 +37,82 @@ services:
         max-size: 10m
         max-file: "3"
 
+  # Optional edge container. Point Nginx Proxy Manager to this service on
+  # port 8080 to serve immutable assets and proxy API traffic efficiently.
+  edge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: edge
+    image: navpilot-edge:local
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "${NAVPILOT_EDGE_PORT:-8788}:8080"
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=16m
+      - /var/run:size=1m
+    cap_drop: [ALL]
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  worker:
+    profiles: [worker]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: navpilot:local
+    restart: unless-stopped
+    init: true
+    command: ["node", "src/worker.js"]
+    env_file:
+      - ./server/.env
+    environment:
+      NODE_ENV: "${NAVPILOT_NODE_ENV:-production}"
+      NAVPILOT_DB_PATH: /app/server/data/navpilot.db
+      NAVPILOT_ENABLE_CRON: "true"
+    volumes:
+      - "${NAVPILOT_DATA_SOURCE:-navpilot-data}:/app/server/data"
+      - ./server/geoip:/app/geoip:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+  postgres:
+    image: postgres:16-alpine
+    profiles: [postgres]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-navpilot}"
+      POSTGRES_USER: "${POSTGRES_USER:-navpilot}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-change-me}"
+    volumes:
+      - navpilot-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   navpilot-data:
+  navpilot-postgres:

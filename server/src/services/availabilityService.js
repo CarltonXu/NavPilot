@@ -63,7 +63,7 @@ function dailyValue(date, row) {
   };
 }
 
-function summarize(item, rows, dayKeys, includeDetails, incidents = []) {
+function summarize(item, rows, dayKeys, includeDetails, incidents = [], includeDaily = true) {
   const byDay = new Map(rows.map((row) => [row.day,row]));
   const daily = dayKeys.map((date) => dailyValue(date,byDay.get(date)));
   const online = rows.reduce((sum,row) => sum + (Number(row.online) || 0),0);
@@ -89,7 +89,7 @@ function summarize(item, rows, dayKeys, includeDetails, incidents = []) {
     availability:online + offline ? Number((online / (online + offline) * 100).toFixed(2)) : null,
     averageLatencyMs:latencySamples ? Math.round(latencyTotal / latencySamples) : null,
     checks,
-    daily,
+    daily: includeDaily ? daily : undefined,
   };
   if (includeDetails) value.incidents = incidents;
   return value;
@@ -108,12 +108,14 @@ function availabilityForItems(db, items, options = {}) {
     byItem.set(row.itemId,list);
   }
   options.onStats?.({ resourceCount:items.length, aggregateRows:rows.length, days });
+  const includeDaily = options.includeDaily !== false;
   return items.map((item) => summarize(
     item,
     byItem.get(item.id) || [],
     selected.days,
     Boolean(options.includeDetails),
     options.includeDetails ? repository.loadIncidents(item.id,selected.from,selected.to) : [],
+    includeDaily,
   ));
 }
 

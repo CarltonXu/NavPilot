@@ -2,8 +2,12 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../auth/AuthContext.jsx";
 import { useI18n } from "../i18n/LocaleContext.jsx";
 import Icon from "./Icon.jsx";
-import { launchAiWorkspace } from "./AiWorkspace.jsx";
 import AiInstructionPanel from "./AiInstructionPanel.jsx";
+
+function launchAiWorkspace({ scope = "personal", text = "" } = {}) {
+  try { sessionStorage.setItem("navpilot_ai_workspace_launch_v1", JSON.stringify({ scope, text, createdAt: Date.now() })); } catch { /* ignore */ }
+  location.href = "/ai";
+}
 
 export default function AiAssistantWidget({
   aiPersonalEnabled,

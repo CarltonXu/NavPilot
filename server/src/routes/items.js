@@ -1,4 +1,5 @@
 const express=require('express');
+const crypto=require('crypto');
 const db=require('../db');
 const {checkAndPersist,checkItems}=require('../services/healthCheck');
 const {requireUser,requirePasswordChanged,authorizeRealm}=require('../middleware/auth');
@@ -53,13 +54,18 @@ router.post('/availability-summaries',(req,res)=>{
     const ids=[...new Set((Array.isArray(req.body?.ids)?req.body.ids:[]).map(Number))];
     if(!ids.length)return res.json({days:clampDays(req.body?.days),items:[]});
     if(ids.length>500||ids.some(id=>!Number.isInteger(id)||id<=0))return res.status(400).json({code:'ITEM_IDS_INVALID',error:'每次最多查询 500 个资源'});
+    const mode = req.body?.mode === 'summary' ? 'summary' : 'timeline';
+    const days = clampDays(req.body?.days);
     const placeholders=ids.map(()=>'?').join(','),visibility=access.sqlVisibility('i',req.auth?.user);
     const rows=db.prepare(`SELECT i.*,c.name categoryName FROM items i LEFT JOIN categories c ON c.id=i.category_id WHERE i.id IN (${placeholders}) AND ${visibility.sql}`).all(...ids,...visibility.params);
-    let stats={resourceCount:rows.length,aggregateRows:0,days:clampDays(req.body?.days)};
-    const items=availabilityForItems(db,rows,{days:req.body?.days,onStats:(value)=>{stats=value;}});
+    const etag = '"' + crypto.createHash('sha1').update(JSON.stringify({mode,days,items:rows.map(r=>[r.id,r.status,r.latency_ms,r.last_checked_at])})).digest('hex') + '"';
+    res.set('ETag', etag).set('Cache-Control', 'private, max-age=15, stale-while-revalidate=30');
+    if (req.headers['if-none-match'] === etag) return res.status(304).end();
+    let stats={resourceCount:rows.length,aggregateRows:0,days};
+    const items=availabilityForItems(db,rows,{days,includeDaily:mode !== 'summary',onStats:(value)=>{stats=value;}});
     const durationMs=Date.now()-startedAt;
     if(durationMs>=250)console.log(`[availability] summaries resources=${stats.resourceCount} aggregateRows=${stats.aggregateRows} days=${stats.days} durationMs=${durationMs}`);
-    return res.json({days:clampDays(req.body?.days),items});
+    return res.json({days,mode,items});
   }catch(error){return sendError(res,error,'AVAILABILITY_LOAD_FAILED');}
 });
 router.get('/:id/availability-day',(req,res)=>{try{const item=visibleItem(req,req.params.id);if(!item)return res.status(404).json({code:'ITEM_NOT_FOUND',error:'条目不存在'});const date=String(req.query.date||'');const timestamp=Date.parse(`${date}T00:00:00Z`);if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(timestamp)||new Date(timestamp).toISOString().slice(0,10)!==date)return res.status(400).json({code:'AVAILABILITY_DATE_INVALID',error:'日期格式无效'});return res.json(availabilityDayForItem(db,item,date));}catch(error){return sendError(res,error,'AVAILABILITY_LOAD_FAILED');}});

@@ -133,6 +133,23 @@ npm run dev
 
 项目根目录提供了多阶段 `Dockerfile` 和 `docker-compose.yml`。镜像构建时编译前端，运行时由 Express 同源托管 API 与静态资源；SQLite 数据保存在 Docker 命名卷 `navpilot-data` 中。
 
+性能组件：API 默认启用 gzip 压缩，指纹化 `/assets/*` 使用一年 immutable 缓存。可选 `edge` 服务提供独立 Nginx 静态层（宿主机端口 8788），将 Nginx Proxy Manager 上游指向 `edge:8080` 即可启用；AI 流式接口会自动关闭代理缓冲。探测任务可移交独立 worker：
+
+```bash
+NAVPILOT_ENABLE_CRON=false docker compose --profile worker up -d app worker edge
+```
+
+PostgreSQL 迁移通过 `postgres` profile 提供，不影响现有 SQLite 运行。启动 PostgreSQL 16 后执行可重跑迁移工具：
+
+```bash
+docker compose --profile postgres up -d postgres
+DATABASE_URL=postgres://navpilot:密码@localhost:5432/navpilot \
+  NAVPILOT_DB_PATH=./server/data/navpilot.db \
+  npm --prefix server run migrate:postgres
+```
+
+迁移保留数字 ID、分批导入并重置序列。切换前请备份 SQLite、上传目录和密钥；当前版本仍默认使用 SQLite，完成业务验证后再切换运行时数据层。
+
 ```bash
 # 首次部署：填写管理员临时密码及其他配置
 cp server/.env.example server/.env

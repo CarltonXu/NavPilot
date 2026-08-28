@@ -4,6 +4,8 @@ import React, {
   useMemo,
   useRef,
   useState,
+  lazy,
+  Suspense,
 } from "react";
 import { api } from "./api.js";
 import { useAuth } from "./auth/AuthContext.jsx";
@@ -16,7 +18,7 @@ import ItemFormModal from "./components/ItemFormModal.jsx";
 import SpaceSwitcher from "./components/SpaceSwitcher.jsx";
 import AiAssistantWidget from "./components/AiAssistantWidget.jsx";
 import ViewModeSwitcher from "./components/ViewModeSwitcher.jsx";
-import AdminWorkspace from "./components/AdminWorkspace.jsx";
+const AdminWorkspace = lazy(() => import("./components/AdminWorkspace.jsx"));
 import { DeleteCategoryDialog } from "./components/PublicContentManager.jsx";
 import {
   AccountMenu,
@@ -50,8 +52,15 @@ import {
   CATEGORY_SIDEBAR_COLLAPSED_WIDTH,
   readCategorySidebarPreference,
 } from "./utils/categorySidebar.js";
-import AiWorkspace,{launchAiWorkspace}from"./components/AiWorkspace.jsx";
-import PublicInsights from"./components/PublicInsights.jsx";
+const AiWorkspaceModule = lazy(() => import("./components/AiWorkspace.jsx"));
+const PublicInsights = lazy(() => import("./components/PublicInsights.jsx"));
+const AiWorkspace = (props) => <AiWorkspaceModule {...props} />;
+const launchAiWorkspace = ({ scope = "personal", text = "" } = {}) => {
+  try {
+    sessionStorage.setItem("navpilot_ai_workspace_launch_v1", JSON.stringify({ scope, text, createdAt: Date.now() }));
+  } catch { /* ignore storage failures */ }
+  location.href = "/ai";
+};
 import { workspaceCapabilities } from "./utils/workspacePermissions.js";
 import { AvailabilityDetailModal } from "./components/AvailabilityTimeline.jsx";
 import { BulkAccessDialog, CategoryAccessDialog } from "./components/AccessControl.jsx";
@@ -288,6 +297,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     }),
     [assistantRequest, setAssistantRequest] = useState(null);
   const [availability, setAvailability] = useState(() => new Map());
+  const [availabilityLimit, setAvailabilityLimit] = useState(120);
   const [availabilityItem, setAvailabilityItem] = useState(null);
   const availabilityCache = useRef(new Map());
   const [accessCategory,setAccessCategory]=useState(null),[bulkAccessOpen,setBulkAccessOpen]=useState(false);
@@ -576,7 +586,9 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
   );
   useEffect(() => {
     if (!ready || !api.getAvailabilitySummaries) return undefined;
-    const candidates = filtered.filter((item) => item.check_enabled);
+    // Availability is supplemental. Load only the first visible window to keep
+    // the initial payload bounded; details are fetched on demand in the modal.
+    const candidates = filtered.filter((item) => item.check_enabled).slice(0, availabilityLimit);
     const needed = candidates.filter((item) => availabilityCache.current.get(item.id) !== `${item.last_checked_at || ""}:${item.status || "unknown"}:${item.latency_ms ?? ""}`);
     if (!needed.length) return undefined;
     let live = true;
@@ -584,7 +596,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       try {
         const chunks = [];
         for (let offset = 0; offset < needed.length; offset += 200) chunks.push(needed.slice(offset, offset + 200));
-        const results = await Promise.all(chunks.map((chunk) => api.getAvailabilitySummaries(chunk.map((item) => item.id), 30)));
+        const results = await Promise.all(chunks.map((chunk) => api.getAvailabilitySummaries(chunk.map((item) => item.id), 30, 'timeline')));
         if (!live) return;
         const byId = new Map();
         results.forEach((result) => (result.items || []).forEach((value) => byId.set(value.itemId, value)));
@@ -599,7 +611,16 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       }
     }, 250);
     return () => { live = false; window.clearTimeout(timer); };
-  }, [filtered, ready]);
+  }, [filtered, ready, availabilityLimit]);
+  useEffect(() => {
+    const onScroll = () => {
+      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 480) {
+        setAvailabilityLimit((value) => Math.min(value + 120, filtered.length));
+      }
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, [filtered.length]);
   const categorySelections = useMemo(
     () => categorySelectionStates(categories, items, selectedIds),
     [categories, items, selectedIds],
@@ -1568,7 +1589,7 @@ export default function App() {
   const canAccessWorkspace = !auth.authenticated || auth.isAdmin;
   return (
     <>
-      {admin ? (
+      <Suspense fallback={<div className="page-loading"><Icon name="refresh" size={18}/> Loading…</div>}>{admin ? (
         <AdminWorkspace
           theme={theme}
           onThemeChange={changeTheme}
@@ -1586,7 +1607,7 @@ export default function App() {
           branding={branding}
           publicSettings={publicSettings}
         />
-      )}
+      )}</Suspense>
       <LoginDialog />
       <PasswordChangeDialog />
       <GlobalSearch />

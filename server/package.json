@@ -12,16 +12,19 @@
     "start": "node src/index.js",
     "test": "node --test",
     "cli": "node src/cli.js"
+    ,"migrate:postgres": "node src/migrate-postgres.js"
   },
   "dependencies": {
     "axios": "^1.7.7",
     "better-sqlite3": "^11.3.0",
+    "compression": "^1.8.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
     "maxmind": "^5.0.7",
     "node-cron": "^3.0.3",
     "nodemailer": "^6.10.1",
+    "pg": "^8.23.0",
     "proxy-addr": "^2.0.7",
     "uuid": "^9.0.1"
   }

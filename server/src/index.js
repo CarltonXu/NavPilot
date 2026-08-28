@@ -2,6 +2,7 @@ require('dotenv').config();
 const path = require('path');
 const fs = require('fs');
 const express = require('express');
+const compression = require('compression');
 
 const categoriesRouter = require('./routes/categories');
 const itemsRouter = require('./routes/items');
@@ -51,6 +52,15 @@ function createApp() {
   const app = express();
   app.disable('x-powered-by');
   configureAppProxy(app);
+  // Compress JSON, HTML and other text responses. Streaming AI responses are
+  // deliberately excluded so chunks reach the browser immediately.
+  app.use(compression({
+    threshold: 1024,
+    filter: (req, res) => {
+      if (req.path.startsWith('/api/ai') || res.getHeader('X-Accel-Buffering') === 'no') return false;
+      return compression.filter(req, res);
+    },
+  }));
   app.use(express.json({ limit: '6mb' }));
   app.use('/api', optionalSession);
   app.use('/api/auth', authRouter);
@@ -77,7 +87,15 @@ function createApp() {
   const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');
   if (fs.existsSync(clientDist)) {
     const indexTemplate = fs.readFileSync(path.join(clientDist, 'index.html'), 'utf8');
-    app.use(express.static(clientDist, { index:false }));
+    app.use('/assets', express.static(path.join(clientDist, 'assets'), {
+      index: false,
+      immutable: true,
+      maxAge: '1y',
+      setHeaders: (res) => {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      },
+    }));
+    app.use(express.static(clientDist, { index:false, maxAge: '1h' }));
     app.get(/^\/(?!api).*/, (req, res) => {
       const settings = {
         bootstrapGeneratedAt: Date.now(),
@@ -105,7 +123,11 @@ async function start() {
   await initializeGeoIp();
   const app = createApp();
   const port = process.env.PORT || 8787;
-  return app.listen(port, () => { console.log(`NavPilot 服务已启动: http://localhost:${port}`); startCron(); });
+  return app.listen(port, () => {
+    console.log(`NavPilot 服务已启动: http://localhost:${port}`);
+    if (String(process.env.NAVPILOT_ENABLE_CRON || 'true') === 'true') startCron();
+    else console.log('[cron] API 进程已禁用定时任务，由独立 worker 负责');
+  });
 }
 
 if (require.main === module) start().catch((error) => { console.error(error); process.exit(1); });
