@@ -9,6 +9,7 @@ const db = require('../src/db');
 const { createApp } = require('../src/index');
 const { createUser } = require('../src/services/authService');
 const { createSession } = require('../src/services/sessionService');
+const { createHealthRepository } = require('../src/services/healthRepository');
 
 test('admin account operations protect administrators and audit responses paginate by 20', async (t) => {
   const admin = await createUser({ username: 'rootadmin', displayName: 'Root Admin', password: 'Strong-admin-password', role: 'admin', mustChangePassword: false });
@@ -40,6 +41,7 @@ test('admin account operations protect administrators and audit responses pagina
     .run(publicItemId, 'Public link', now - 10 * 60_000);
   db.prepare("INSERT INTO resource_health_events(item_id,item_name,scope,owner_id,status,latency_ms,checked_at_ms) VALUES(?,?,'public',NULL,'online',180,?)")
     .run(publicItemId, 'Public link', now - 5 * 60_000);
+  createHealthRepository(db).rebuild();
   db.prepare("INSERT INTO analytics_events(id,occurred_at_ms,event_name,user_id,item_id,category_id,scope,item_name,item_url,item_owner_id,properties_json) VALUES(?,?, 'item.clicked',?,?,?,?,?,?,?,'{}')")
     .run(crypto.randomUUID(), now, member.id, personalItemId, categoryId, 'personal', 'Private link', 'https://private.example', member.id);
   db.prepare("INSERT INTO analytics_events(id,occurred_at_ms,event_name,user_id,item_id,scope,country_code,city_name,city_source,item_name,item_url,properties_json) VALUES(?,?, 'item.clicked',?,?,?,?,?,?,?,?,'{}')")

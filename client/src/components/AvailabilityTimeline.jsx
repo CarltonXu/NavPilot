@@ -169,6 +169,7 @@ function LatencyChart({ events, locale, aggregation = "events" }) {
 function DayHistory({ value, locale, loading, selectedHour = null, onSelectHour = null }) {
   const zh = locale !== "en";
   if (loading) return <div className="availability-day-empty loading"><Icon name="refresh" size={20}/><strong>{zh ? "正在加载当日记录…" : "Loading daily checks…"}</strong></div>;
+  if (value?.detailAvailable === false) return <div className="availability-day-empty"><span><Icon name="archive" size={21}/></span><strong>{zh ? "五分钟明细已按保留策略清理" : "Fine-grained checks have expired"}</strong><small>{zh ? `每日汇总和故障事件仍会长期保留；当前原始明细保留 ${value.detailRetentionDays || 30} 天。` : `Daily summaries and incidents remain available; raw checks are retained for ${value.detailRetentionDays || 30} days.`}</small></div>;
   if (!value?.events?.length) return <div className="availability-day-empty"><span><Icon name="clock" size={21}/></span><strong>{zh ? "当天没有探测记录" : "No checks on this day"}</strong><small>{zh ? "可以返回每日概览选择其他日期。" : "Return to the daily overview and choose another date."}</small></div>;
   const hourly = Array.from({ length:24 }, (_, hour) => ({ hour, events:[], slots:Array.from({ length:12 }, (_, index) => ({ minute:index * 5, events:[] })) }));
   value.events.forEach((event) => {
@@ -304,7 +305,7 @@ export function AvailabilityDetailModal({ item, initialValue = null, initialDate
         <header className="availability-detail-head">
           <span><ContentIcon value={item.icon || "icon:link"} cachedUrl={item.icon_cache_url} size={22} /></span>
           <div><h3 id="availability-detail-title">{item.name}</h3><p title={item.url}>{item.url}</p></div>
-          <div className="availability-range-switch" role="group" aria-label={zh ? "统计周期" : "Time range"}>{[7, 15, 30].map((range) => <button type="button" className={days === range ? "active" : ""} key={range} onClick={() => setDays(range)}>{range}{zh ? "天" : "d"}</button>)}</div>
+          <div className="availability-range-switch" role="group" aria-label={zh ? "统计周期" : "Time range"}>{[7, 15, 30, 90].map((range) => <button type="button" className={days === range ? "active" : ""} key={range} onClick={() => setDays(range)}>{range}{zh ? "天" : "d"}</button>)}</div>
           <button type="button" className="mini-btn" aria-label={zh ? "关闭" : "Close"} onClick={onClose}><Icon name="close" size={15} /></button>
         </header>
         {error && <div className="admin-inline-error"><Icon name="shield" size={15}/>{error}</div>}

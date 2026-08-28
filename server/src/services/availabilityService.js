@@ -1,5 +1,12 @@
-const DAY_MS = 86400000;
+const { createHealthRepository, retentionDays, DAY_MS } = require('./healthRepository');
+
 const DEGRADED_LATENCY_MS = Math.max(250, Number(process.env.AVAILABILITY_DEGRADED_MS) || 1500);
+const repositories = new WeakMap();
+
+function repositoryFor(db) {
+  if (!repositories.has(db)) repositories.set(db,createHealthRepository(db));
+  return repositories.get(db);
+}
 
 function clampDays(value) {
   return [7, 15, 30, 90].includes(Number(value)) ? Number(value) : 30;
@@ -21,78 +28,50 @@ function period(days, now = Date.now()) {
   end.setUTCHours(0, 0, 0, 0);
   const start = end.getTime() - (days - 1) * DAY_MS;
   return {
-    from: start,
-    days: Array.from({ length:days }, (_, index) => utcDay(start + index * DAY_MS)),
+    from:start,
+    to:end.getTime() + DAY_MS,
+    days:Array.from({ length:days }, (_, index) => utcDay(start + index * DAY_MS)),
   };
 }
 
-function loadEvents(db, itemIds, from) {
-  const rows = [];
-  for (let offset = 0; offset < itemIds.length; offset += 400) {
-    const ids = itemIds.slice(offset, offset + 400);
-    if (!ids.length) continue;
-    const placeholders = ids.map(() => '?').join(',');
-    rows.push(...db.prepare(`SELECT item_id itemId,status,latency_ms latencyMs,checked_at_ms checkedAtMs
-      FROM resource_health_events WHERE checked_at_ms>=? AND item_id IN (${placeholders})
-      ORDER BY checked_at_ms`).all(from, ...ids));
-  }
-  return rows;
+function dailyState(row) {
+  if (!row || !row.checks) return 'unknown';
+  const known = Number(row.online) + Number(row.offline);
+  const average = row.latencySamples ? Math.round(Number(row.latencyTotal) / Number(row.latencySamples)) : null;
+  if (!known) return 'unknown';
+  if (!Number(row.online) && Number(row.offline)) return 'offline';
+  if (Number(row.offline) || (average != null && average >= DEGRADED_LATENCY_MS)) return 'degraded';
+  return 'online';
 }
 
-function incidents(events, now) {
-  const result = [];
-  let current = null;
-  for (const event of events) {
-    if (event.status === 'offline' && !current) {
-      current = { startedAtMs:event.checkedAtMs, endedAtMs:null, recovered:false };
-    } else if (event.status === 'online' && current) {
-      current.endedAtMs = event.checkedAtMs;
-      current.recovered = true;
-      current.durationMs = Math.max(0, current.endedAtMs - current.startedAtMs);
-      result.push(current);
-      current = null;
-    }
-  }
-  if (current) {
-    current.durationMs = Math.max(0, now - current.startedAtMs);
-    result.push(current);
-  }
-  return result.reverse().slice(0, 20);
+function dailyValue(date, row) {
+  if (!row) return { date, status:'unknown', checks:0, availability:null, averageLatencyMs:null };
+  const online = Number(row.online) || 0;
+  const offline = Number(row.offline) || 0;
+  const known = online + offline;
+  return {
+    date,
+    status:dailyState(row),
+    checks:Number(row.checks) || 0,
+    online,
+    offline,
+    unknown:Number(row.unknown) || 0,
+    availability:known ? Number((online / known * 100).toFixed(2)) : null,
+    averageLatencyMs:row.latencySamples ? Math.round(Number(row.latencyTotal) / Number(row.latencySamples)) : null,
+    minLatencyMs:row.minLatencyMs ?? null,
+    maxLatencyMs:row.maxLatencyMs ?? null,
+  };
 }
 
-function summarize(item, events, dayKeys, now, includeDetails) {
-  const byDay = new Map();
-  for (const event of events) {
-    const key = utcDay(event.checkedAtMs);
-    const bucket = byDay.get(key) || { checks:0, online:0, offline:0, unknown:0, latencyTotal:0, latencySamples:0 };
-    bucket.checks += 1;
-    bucket[event.status] = (bucket[event.status] || 0) + 1;
-    if (event.latencyMs != null) {
-      bucket.latencyTotal += Number(event.latencyMs);
-      bucket.latencySamples += 1;
-    }
-    byDay.set(key, bucket);
-  }
-  const daily = dayKeys.map((date) => {
-    const bucket = byDay.get(date);
-    if (!bucket) return { date, status:'unknown', checks:0, availability:null, averageLatencyMs:null };
-    const known = bucket.online + bucket.offline;
-    const averageLatencyMs = bucket.latencySamples ? Math.round(bucket.latencyTotal / bucket.latencySamples) : null;
-    let status = 'online';
-    if (!known) status = 'unknown';
-    else if (!bucket.online && bucket.offline) status = 'offline';
-    else if (bucket.offline || (averageLatencyMs != null && averageLatencyMs >= DEGRADED_LATENCY_MS)) status = 'degraded';
-    return {
-      date, status, checks:bucket.checks, online:bucket.online, offline:bucket.offline,
-      availability:known ? Number((bucket.online / known * 100).toFixed(2)) : null,
-      averageLatencyMs,
-    };
-  });
-  const online = events.filter((event) => event.status === 'online').length;
-  const offline = events.filter((event) => event.status === 'offline').length;
-  const latency = events.filter((event) => event.latencyMs != null).map((event) => Number(event.latencyMs));
-  const last = events[events.length - 1];
-  const currentStatus = item.status || last?.status || 'unknown';
+function summarize(item, rows, dayKeys, includeDetails, incidents = []) {
+  const byDay = new Map(rows.map((row) => [row.day,row]));
+  const daily = dayKeys.map((date) => dailyValue(date,byDay.get(date)));
+  const online = rows.reduce((sum,row) => sum + (Number(row.online) || 0),0);
+  const offline = rows.reduce((sum,row) => sum + (Number(row.offline) || 0),0);
+  const checks = rows.reduce((sum,row) => sum + (Number(row.checks) || 0),0);
+  const latencyTotal = rows.reduce((sum,row) => sum + (Number(row.latencyTotal) || 0),0);
+  const latencySamples = rows.reduce((sum,row) => sum + (Number(row.latencySamples) || 0),0);
+  const currentStatus = item.status || 'unknown';
   const currentLatency = item.latency_ms ?? item.latencyMs ?? null;
   const value = {
     itemId:item.id,
@@ -106,40 +85,48 @@ function summarize(item, events, dayKeys, now, includeDetails) {
     status:currentStatus,
     state:currentStatus === 'online' && currentLatency != null && currentLatency >= DEGRADED_LATENCY_MS ? 'degraded' : currentStatus,
     latencyMs:currentLatency,
-    lastCheckedAtMs:last?.checkedAtMs || storedTimestamp(item.last_checked_at ?? item.lastCheckedAt),
+    lastCheckedAtMs:storedTimestamp(item.last_checked_at ?? item.lastCheckedAt),
     availability:online + offline ? Number((online / (online + offline) * 100).toFixed(2)) : null,
-    averageLatencyMs:latency.length ? Math.round(latency.reduce((sum, value) => sum + value, 0) / latency.length) : null,
-    checks:events.length,
+    averageLatencyMs:latencySamples ? Math.round(latencyTotal / latencySamples) : null,
+    checks,
     daily,
   };
-  if (includeDetails) {
-    value.events = events.slice(-60).reverse();
-    value.incidents = incidents(events, now);
-  }
+  if (includeDetails) value.incidents = incidents;
   return value;
 }
 
 function availabilityForItems(db, items, options = {}) {
   const days = clampDays(options.days);
   const now = options.now || Date.now();
-  const selectedPeriod = period(days, now);
-  const events = loadEvents(db, items.map((item) => item.id), selectedPeriod.from);
+  const selected = period(days,now);
+  const repository = repositoryFor(db);
+  const rows = repository.loadDaily(items.map((item) => item.id),selected.days[0],selected.days.at(-1));
   const byItem = new Map();
-  events.forEach((event) => {
-    const list = byItem.get(event.itemId) || [];
-    list.push(event);
-    byItem.set(event.itemId, list);
-  });
-  return items.map((item) => summarize(item, byItem.get(item.id) || [], selectedPeriod.days, now, Boolean(options.includeDetails)));
+  for (const row of rows) {
+    const list = byItem.get(row.itemId) || [];
+    list.push(row);
+    byItem.set(row.itemId,list);
+  }
+  options.onStats?.({ resourceCount:items.length, aggregateRows:rows.length, days });
+  return items.map((item) => summarize(
+    item,
+    byItem.get(item.id) || [],
+    selected.days,
+    Boolean(options.includeDetails),
+    options.includeDetails ? repository.loadIncidents(item.id,selected.from,selected.to) : [],
+  ));
 }
 
-function availabilityDayForItem(db, item, date) {
+function availabilityDayForItem(db, item, date, options = {}) {
   const from = Date.parse(`${date}T00:00:00Z`);
   const to = from + DAY_MS;
-  const events = db.prepare(`SELECT item_id itemId,status,latency_ms latencyMs,checked_at_ms checkedAtMs
-    FROM resource_health_events WHERE item_id=? AND checked_at_ms>=? AND checked_at_ms<?
-    ORDER BY checked_at_ms`).all(item.id, from, to);
-  const summary = summarize(item, events, [date], Math.min(Date.now(), to), true);
+  const repository = repositoryFor(db);
+  const [row] = repository.loadDaily([item.id],date,date);
+  const rawRetentionDays = retentionDays(options.retentionDays);
+  const detailAvailable = from >= Date.now() - rawRetentionDays * DAY_MS;
+  const events = detailAvailable ? repository.loadRaw(item.id,from,to) : [];
+  const incidents = repository.loadIncidents(item.id,from,to);
+  const summary = summarize(item,row ? [row] : [],[date],true,incidents);
   const bucket = summary.daily[0];
   return {
     ...summary,
@@ -150,7 +137,9 @@ function availabilityDayForItem(db, item, date) {
     averageLatencyMs:bucket.averageLatencyMs,
     checks:bucket.checks,
     events:[...events].reverse(),
-    incidents:incidents(events, Math.min(Date.now(), to)),
+    incidents,
+    detailAvailable,
+    detailRetentionDays:rawRetentionDays,
   };
 }
 

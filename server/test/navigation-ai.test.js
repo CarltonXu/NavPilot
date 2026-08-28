@@ -91,6 +91,9 @@ test("latest schema includes versions and AI execution tables", () => {
   assert.ok(
     db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='user_favorites'").get(),
   );
+  assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='resource_health_daily'").get());
+  assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='resource_health_incidents'").get());
+  assert.ok(db.prepare('SELECT 1 FROM schema_migrations WHERE version=21').get());
   assert.ok(itemColumns.includes("tags_json"));
   assert.ok(
     [

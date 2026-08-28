@@ -3,8 +3,10 @@ const net = require('net');
 const { URL } = require('url');
 const db = require('../db');
 const { processCheckAlert } = require('./alertService');
+const { createHealthRepository } = require('./healthRepository');
 
 const TIMEOUT_MS = parseInt(process.env.CHECK_TIMEOUT_MS || '5000', 10);
+const healthRepository = createHealthRepository(db);
 
 /**
  * 通过 HTTP(S) 请求探测目标是否可访问，返回 { status, latencyMs }
@@ -77,9 +79,10 @@ async function checkItem(item, { force = false } = {}) {
 
 async function checkAndPersist(item, options = {}) {
   const result = await checkItem(item, options);
+  const checkedAtMs = Date.now();
   db.transaction(() => {
     db.prepare(`UPDATE items SET status = ?, latency_ms = ?, last_checked_at = datetime('now') WHERE id = ?`).run(result.status, result.latencyMs, item.id);
-    db.prepare(`INSERT INTO resource_health_events(item_id,item_name,scope,owner_id,status,latency_ms,checked_at_ms) VALUES(?,?,?,?,?,?,?)`).run(item.id,item.name,item.scope,item.owner_id||null,result.status,result.latencyMs,Date.now());
+    healthRepository.record(item,result,checkedAtMs);
   })();
   await processCheckAlert(item, result);
   return result;

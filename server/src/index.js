@@ -19,6 +19,7 @@ const alertsRouter = require('./routes/alerts');
 const { optionalSession } = require('./middleware/auth');
 const { bootstrapAdmin } = require('./services/authService');
 const { cleanupSessions } = require('./services/sessionService');
+const { createHealthRepository } = require('./services/healthRepository');
 const { startCron } = require('./cron');
 const { configureAppProxy,initializeGeoIp,getGeoStatus } = require('./services/proxyGeoService');
 const { getBrandingSettings, getPublicInsightsSettings, getSetting } = require('./services/settingsService');
@@ -99,6 +100,8 @@ async function start() {
   const bootstrapped = await bootstrapAdmin();
   if (bootstrapped) console.log(`[auth] 已创建首个管理员: ${bootstrapped.username}，首次登录必须修改密码`);
   cleanupSessions();
+  const healthInitialization = createHealthRepository(require('./db')).initialize();
+  if (!healthInitialization.skipped) console.log(`[health-data] 历史回填完成 events=${healthInitialization.eventCount} daily=${healthInitialization.dailyCount} incidents=${healthInitialization.incidentCount} 耗时=${healthInitialization.durationMs}ms`);
   await initializeGeoIp();
   const app = createApp();
   const port = process.env.PORT || 8787;

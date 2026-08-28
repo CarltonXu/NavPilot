@@ -343,12 +343,15 @@ router.get("/summary", (req, res) => {
     latency:{p50:percentile(latencyValues,.5),p95:percentile(latencyValues,.95),p99:percentile(latencyValues,.99)},
     highUseThreshold,
   };
-  const healthClauses=['h.checked_at_ms>=?'],healthParams=[from];
+  const healthClauses=['h.day>=?'],healthParams=[new Date(from).toISOString().slice(0,10)];
   if(selected.scope!=='all'){healthClauses.push('h.scope=?');healthParams.push(selected.scope);}
   if(selected.ownerId){healthClauses.push('h.owner_id=?');healthParams.push(selected.ownerId);}
-  const healthTrendRows=db.prepare(`SELECT date(h.checked_at_ms/1000,'unixepoch') day,COUNT(*) checks,SUM(CASE WHEN h.status='online' THEN 1 ELSE 0 END) online,SUM(CASE WHEN h.status='offline' THEN 1 ELSE 0 END) offline,ROUND(AVG(CASE WHEN h.status='online' THEN h.latency_ms END)) averageLatencyMs FROM resource_health_events h WHERE ${healthClauses.join(' AND ')} GROUP BY day ORDER BY day`).all(...healthParams);
+  const healthTrendRows=db.prepare(`SELECT h.day,SUM(h.checks) checks,SUM(h.online_count) online,SUM(h.offline_count) offline,
+    ROUND(SUM(h.latency_sum)*1.0/NULLIF(SUM(h.latency_samples),0)) averageLatencyMs
+    FROM resource_health_daily h WHERE ${healthClauses.join(' AND ')} GROUP BY h.day ORDER BY h.day`).all(...healthParams);
   const healthTrend=dailySeries(from,days,healthTrendRows,['checks','online','offline','averageLatencyMs']).map((row)=>({...row,availability:row.checks?Number((row.online/row.checks*100).toFixed(1)):null}));
-  const firstHealthEvent=db.prepare('SELECT MIN(checked_at_ms) startedAt FROM resource_health_events').get().startedAt;
+  const firstHealthDay=db.prepare('SELECT MIN(day) day FROM resource_health_daily').get().day;
+  const firstHealthEvent=firstHealthDay?Date.parse(`${firstHealthDay}T00:00:00Z`):null;
   const slowResources = resourceRows.filter((row)=>row.latencyMs!=null).sort((a,b)=>b.latencyMs-a.latencyMs).slice(0,10).map(({id,name,latencyMs,status,visits})=>({id,name,latencyMs,status,visits}));
   const tagCounts = new Map();
   resourceRows.forEach((row)=>{try{JSON.parse(row.tagsJson||'[]').forEach((tag)=>tagCounts.set(String(tag),1+(tagCounts.get(String(tag))||0)));}catch{/* legacy tags */}});

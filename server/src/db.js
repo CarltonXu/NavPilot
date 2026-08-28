@@ -227,6 +227,41 @@ function createLatestSchema(db) {
       latency_ms INTEGER,
       checked_at_ms INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS resource_health_daily (
+      item_id INTEGER NOT NULL,
+      day TEXT NOT NULL,
+      item_name TEXT,
+      item_url TEXT,
+      scope TEXT NOT NULL CHECK(scope IN ('public','personal')),
+      owner_id TEXT,
+      checks INTEGER NOT NULL DEFAULT 0,
+      online_count INTEGER NOT NULL DEFAULT 0,
+      offline_count INTEGER NOT NULL DEFAULT 0,
+      unknown_count INTEGER NOT NULL DEFAULT 0,
+      latency_sum INTEGER NOT NULL DEFAULT 0,
+      latency_samples INTEGER NOT NULL DEFAULT 0,
+      min_latency_ms INTEGER,
+      max_latency_ms INTEGER,
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      PRIMARY KEY(item_id,day)
+    );
+    CREATE TABLE IF NOT EXISTS resource_health_incidents (
+      id TEXT PRIMARY KEY,
+      item_id INTEGER NOT NULL,
+      item_name TEXT,
+      item_url TEXT,
+      scope TEXT NOT NULL CHECK(scope IN ('public','personal')),
+      owner_id TEXT,
+      started_at_ms INTEGER NOT NULL,
+      ended_at_ms INTEGER,
+      duration_ms INTEGER,
+      failure_count INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL CHECK(status IN ('open','resolved')),
+      last_error TEXT,
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS command_executions (
       id TEXT PRIMARY KEY,
       plan_id TEXT NOT NULL,
@@ -442,6 +477,11 @@ function createLatestSchema(db) {
     CREATE INDEX IF NOT EXISTS resource_health_time_idx ON resource_health_events(checked_at_ms,status);
     CREATE INDEX IF NOT EXISTS resource_health_realm_time_idx ON resource_health_events(scope,owner_id,checked_at_ms);
     CREATE INDEX IF NOT EXISTS resource_health_item_time_idx ON resource_health_events(item_id,checked_at_ms);
+    CREATE INDEX IF NOT EXISTS resource_health_daily_time_idx ON resource_health_daily(day,item_id);
+    CREATE INDEX IF NOT EXISTS resource_health_daily_realm_time_idx ON resource_health_daily(scope,owner_id,day);
+    CREATE INDEX IF NOT EXISTS resource_health_incident_item_time_idx ON resource_health_incidents(item_id,started_at_ms DESC);
+    CREATE INDEX IF NOT EXISTS resource_health_incident_realm_time_idx ON resource_health_incidents(scope,owner_id,started_at_ms DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS resource_health_incident_open_uq ON resource_health_incidents(item_id) WHERE ended_at_ms IS NULL;
     CREATE INDEX IF NOT EXISTS audit_log_time_idx ON audit_log(created_at DESC);
     CREATE INDEX IF NOT EXISTS audit_log_action_idx ON audit_log(action,created_at DESC);
     CREATE INDEX IF NOT EXISTS sessions_lookup_idx ON sessions(token_hash, revoked_at);
@@ -738,6 +778,12 @@ function migrateCurrentSchema(db) {
     db.transaction(() => {
       addColumnIfMissing(db, 'alert_policies', "title_template TEXT NOT NULL DEFAULT '[NavPilot] {status} · {resource}'");
       db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(20)').run();
+    })();
+  }
+  if (!applied.has(21)) {
+    db.transaction(() => {
+      createLatestSchema(db);
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(21)').run();
     })();
   }
 }

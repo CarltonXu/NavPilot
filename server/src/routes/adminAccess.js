@@ -10,6 +10,7 @@ const router = express.Router();
 const access = createAccessControlService(db);
 
 router.get('/availability', (req, res) => {
+  const startedAt = Date.now();
   try {
     const scope = ['all', 'public', 'personal'].includes(req.query.scope) ? req.query.scope : 'all';
     const params = [], clauses = [];
@@ -17,9 +18,12 @@ router.get('/availability', (req, res) => {
     const items = db.prepare(`SELECT i.*,c.name categoryName,u.display_name ownerName
       FROM items i LEFT JOIN categories c ON c.id=i.category_id LEFT JOIN users u ON u.id=i.owner_id
       ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''} ORDER BY i.name COLLATE NOCASE`).all(...params);
-    const values = availabilityForItems(db, items, { days:req.query.days });
+    let stats = null;
+    const values = availabilityForItems(db, items, { days:req.query.days, onStats:(value) => { stats = value; } });
     const summary = { total:values.length, monitored:values.filter((item) => item.checkEnabled).length, online:0, degraded:0, offline:0, unknown:0 };
     values.forEach((item) => { summary[item.checkEnabled ? item.state : 'unknown'] += 1; });
+    const durationMs = Date.now() - startedAt;
+    if (durationMs >= 250) console.log(`[availability] admin resources=${stats?.resourceCount || items.length} aggregateRows=${stats?.aggregateRows || 0} days=${stats?.days || clampDays(req.query.days)} durationMs=${durationMs}`);
     return res.json({ days:clampDays(req.query.days), summary, items:values });
   } catch (error) { return fail(res, error, 'AVAILABILITY_LOAD_FAILED'); }
 });
@@ -43,6 +47,7 @@ router.post('/availability/:id/check', async (req, res) => {
 });
 
 function fail(res, error, fallback = 'ACCESS_GROUP_FAILED') {
+  if (!error.status) console.error(`[admin-access] ${fallback}`,error);
   return res.status(error.status || 500).json({ code: error.code || fallback, error: error.status ? error.message : '授权组操作失败' });
 }
 

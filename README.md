@@ -21,6 +21,7 @@ NavPilot 是一个简洁的企业内部导航门户，支持后台快速编辑�
   - 支持 HTTP(S) 探测（HEAD/GET，2xx-4xx 视为在线，5xx/超时/连接失败视为离线）
   - 支持 TCP 端口探测（host:port 连通性）
   - 支持定时自动探测（仅监控已启用的资源，间隔可配置，默认 5 分钟）
+  - 原始探测、每日聚合和故障事件分层保存；五分钟明细默认保留 30 天，长期趋势读取每日聚合
   - 用户手动点击“全部探测”或单条目探测时会临时检查当前空间资源，不受定时监控开关影响
   - 展示实时延迟（毫秒），顶部栏常驻"在线/离线/总数"统计
 - **点击统计**：记录每个导航条目被点击的次数
@@ -105,6 +106,8 @@ AI_MODEL=gpt-4o-mini
 AUTO_CHECK_ENABLED=true
 CHECK_INTERVAL_MINUTES=5
 CHECK_TIMEOUT_MS=5000
+HEALTH_RAW_RETENTION_DAYS=30
+HEALTH_MAINTENANCE_ENABLED=true
 ```
 
 AI 配置优先级为：**系统设置数据库覆盖 > 环境变量 > 内置默认值**。后台保存的 API Key 使用 AES-256-GCM 加密，主密钥首次运行时生成在数据目录 `.navpilot-secret`；也可以通过 `NAVPILOT_SECRET_KEY` 提供 32 字节 Base64 或 64 位十六进制密钥。数据库和主密钥必须分别备份，否则无法恢复模型密钥。
@@ -302,7 +305,7 @@ npm start               # 后端会自动检测并托管 client/dist，只需暴
 
 扩展只在带 NavPilot 页面标记的网站中响应读取请求，不读取登录 Cookie，也不会自行上传或修改书签；导入前仍会展示完整预览、重复检查和选择列表。
 
-升级前应对 `server/data/navpilot.db` 做 SQLite 一致性备份。新版本使用事务化 `schema_migrations`、外键检查和 public/personal realm 约束；迁移失败会停止启动，不会静默跳过。个人旧条目的自动探测在迁移时默认关闭，以避免未经账户确认继续探测。
+升级前应对 `server/data/navpilot.db` 做 SQLite 一致性备份。新版本使用事务化 `schema_migrations`、外键检查和 public/personal realm 约束；迁移失败会停止启动，不会静默跳过。首次升级会将现有探测明细幂等回填为每日汇总和故障事件，完成后才启动 HTTP 服务。个人旧条目的自动探测在迁移时默认关闭，以避免未经账户确认继续探测。
 
 ## 使用说明
 
@@ -339,7 +342,7 @@ npm start               # 后端会自动检测并托管 client/dist，只需暴
 
 - 拖拽排序（当前分类/条目排序已有 `sort_order` 字段与 `/reorder` 接口，前端拖拽交互可后续补充）
 - 自动抓取网站 favicon，减少手动选 emoji 的成本
-- 探测结果历史记录 / 可用率趋势图（当前只保留最近一次探测结果）
+- PostgreSQL 数据访问适配与迁移工具（当前 SQLite 已使用原始明细、每日汇总、故障事件三层模型）
 - 离线状态变化时接入企业微信 / 钉钉 webhook 告警
 - 探测失败重试机制（当前一次超时/失败即判定离线，容易受网络抖动影响误报）
 - 个人空间"收藏公共空间条目"能力（目前个人空间与公共空间是完全独立的两份数据）
