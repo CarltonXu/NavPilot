@@ -11,7 +11,7 @@ services:
     restart: unless-stopped
     init: true
     env_file:
-      - ../config/server.env
+      - "${NAVPILOT_SERVER_ENV_PATH:-../config/server.env}"
     environment:
       NODE_ENV: production
       PORT: "8787"
@@ -24,7 +24,7 @@ services:
       NAVPILOT_TRUST_PROXY: uniquelocal
     volumes:
       - "${NAVPILOT_DATA_PATH:-../data}:/app/server/data"
-      - ../geoip:/app/geoip:ro
+      - "${NAVPILOT_GEOIP_PATH:-../geoip}:/app/geoip:ro"
     depends_on:
       postgres:
         condition: service_healthy
@@ -54,7 +54,7 @@ services:
       app:
         condition: service_healthy
     volumes:
-      - ./nginx.production.conf:/etc/nginx/nginx.conf:ro
+      - "${NAVPILOT_EDGE_CONFIG_PATH:-./nginx.production.conf}:/etc/nginx/nginx.conf:ro"
     networks:
       backend: {}
       npm_proxy:
@@ -78,7 +78,7 @@ services:
     healthcheck:
       disable: true
     env_file:
-      - ../config/server.env
+      - "${NAVPILOT_SERVER_ENV_PATH:-../config/server.env}"
     environment:
       NODE_ENV: production
       NAVPILOT_DB_PATH: /app/server/data/navpilot.db
@@ -87,7 +87,7 @@ services:
       NAVPILOT_ENABLE_CRON: "true"
     volumes:
       - "${NAVPILOT_DATA_PATH:-../data}:/app/server/data"
-      - ../geoip:/app/geoip:ro
+      - "${NAVPILOT_GEOIP_PATH:-../geoip}:/app/geoip:ro"
     depends_on:
       postgres:
         condition: service_healthy
