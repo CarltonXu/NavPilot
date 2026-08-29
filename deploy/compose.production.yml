@@ -28,7 +28,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    networks: [backend]
+    networks: [backend, egress]
     read_only: true
     tmpfs:
       - /tmp:size=16m,noexec,nosuid,nodev
@@ -91,7 +91,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    networks: [backend]
+    networks: [backend, egress]
     read_only: true
     tmpfs:
       - /tmp:size=16m,noexec,nosuid,nodev
@@ -123,5 +123,7 @@ services:
 networks:
   backend:
     internal: true
+  egress:
+    driver: bridge
   npm_proxy:
     external: true
