@@ -99,7 +99,7 @@ function createHealthRepository(db = defaultDb) {
       db.exec(`INSERT INTO resource_health_daily
         (item_id,day,item_name,item_url,scope,owner_id,checks,online_count,offline_count,unknown_count,latency_sum,latency_samples,min_latency_ms,max_latency_ms,created_at_ms,updated_at_ms)
         SELECT e.item_id,date(e.checked_at_ms/1000,'unixepoch'),MAX(e.item_name),MAX(i.url),e.scope,e.owner_id,
-          COUNT(*),SUM(e.status='online'),SUM(e.status='offline'),SUM(e.status='unknown'),
+          COUNT(*),SUM(CASE WHEN e.status='online' THEN 1 ELSE 0 END),SUM(CASE WHEN e.status='offline' THEN 1 ELSE 0 END),SUM(CASE WHEN e.status='unknown' THEN 1 ELSE 0 END),
           COALESCE(SUM(CASE WHEN e.latency_ms IS NOT NULL THEN e.latency_ms ELSE 0 END),0),COUNT(e.latency_ms),MIN(e.latency_ms),MAX(e.latency_ms),
           MIN(e.checked_at_ms),MAX(e.checked_at_ms)
         FROM resource_health_events e LEFT JOIN items i ON i.id=e.item_id

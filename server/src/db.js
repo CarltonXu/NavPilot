@@ -814,7 +814,10 @@ function createDatabase(filename = DEFAULT_DB_PATH) {
   return db;
 }
 
-const db = createDatabase(process.env.NAVPILOT_DB_PATH || DEFAULT_DB_PATH);
+const usePostgres = String(process.env.NAVPILOT_DB_DRIVER || '').toLowerCase() === 'postgres';
+const db = usePostgres
+  ? require('./db/postgresCompat').createPostgresDatabase()
+  : createDatabase(process.env.NAVPILOT_DB_PATH || DEFAULT_DB_PATH);
 db.createDatabase = createDatabase;
 db.DEFAULT_DB_PATH = DEFAULT_DB_PATH;
 module.exports = db;

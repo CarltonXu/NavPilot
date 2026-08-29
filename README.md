@@ -42,7 +42,7 @@ NavPilot 是一个简洁的企业内部导航门户，支持后台快速编辑�
 
 ## 技术栈
 
-- 后端：Node.js + Express + better-sqlite3（SQLite，零配置，数据文件在 `server/data/navpilot.db`）+ node-cron（定时探测）+ axios（HTTP 探测与 AI 接口调用）
+- 后端：Node.js + Express + PostgreSQL 16（正式运行库）+ 独立 Worker/node-cron（定时探测）+ axios（HTTP 探测与 AI 接口调用）；`better-sqlite3` 仅用于旧版数据迁移和回滚归档
 - 前端：React 18 + Vite，纯 CSS 变量实现多主题，无额外 UI 框架依赖
 
 ## 目录结构
@@ -52,7 +52,8 @@ navpilot/
 ├── server/            # 后端服务
 │   ├── src/
 │   │   ├── index.js          # 服务入口
-│   │   ├── db.js             # SQLite 初始化 + 表结构（含 scope/owner 字段）+ 默认数据
+│   │   ├── db.js             # PostgreSQL 运行时选择 + SQLite 旧版迁移入口
+│   │   ├── db/               # PostgreSQL 兼容数据层、SQL 方言转换与事务桥接
 │   │   ├── cron.js           # 定时探测任务
 │   │   ├── middleware/auth.js   # requireAdmin(公共空间) / requireUser(个人空间身份)
 │   │   ├── routes/           # categories / items / ai / settings
@@ -131,27 +132,32 @@ npm run dev
 
 ### 4. Docker Compose 部署（推荐）
 
-项目根目录提供了多阶段 `Dockerfile` 和 `docker-compose.yml`。镜像构建时编译前端，运行时由 Express 同源托管 API 与静态资源；SQLite 数据保存在 Docker 命名卷 `navpilot-data` 中。
+项目根目录提供了多阶段 `Dockerfile` 和 `docker-compose.yml`。默认生产结构由 PostgreSQL、API、探测 Worker 和 Edge Nginx 四个容器组成；PostgreSQL 使用独立命名卷 `navpilot-postgres`，且不映射宿主机端口，因此不会与同一主机上的其他 PostgreSQL 容器冲突。
 
-性能组件：API 默认启用 gzip 压缩，指纹化 `/assets/*` 使用一年 immutable 缓存。可选 `edge` 服务提供独立 Nginx 静态层（宿主机端口 8788），将 Nginx Proxy Manager 上游指向 `edge:8080` 即可启用；AI 流式接口会自动关闭代理缓冲。探测任务可移交独立 worker：
+Edge 服务提供独立 Nginx 静态层（本地端口 8788），API 默认启用 gzip 压缩，指纹化 `/assets/*` 使用一年 immutable 缓存；AI 流式接口自动关闭代理缓冲。生产环境将 Nginx Proxy Manager 上游指向 `edge:8080`。探测、历史清理和维护由独立 Worker 执行，API 进程不重复启动定时任务：
 
 ```bash
-NAVPILOT_ENABLE_CRON=false docker compose --profile worker up -d app worker edge
+docker compose up -d --build
 ```
 
-PostgreSQL 迁移通过 `postgres` profile 提供，不影响现有 SQLite 运行。启动 PostgreSQL 16 后执行可重跑迁移工具：
+从旧版 SQLite 一次性切换 PostgreSQL 时，先停止 App/Worker 写入并归档 SQLite，然后重建目标 schema 后全量迁移：
 
 ```bash
-docker compose --profile postgres up -d postgres
-DATABASE_URL=postgres://navpilot:密码@localhost:5432/navpilot \
-  NAVPILOT_DB_PATH=./server/data/navpilot.db \
-  npm --prefix server run migrate:postgres
+docker compose stop edge app worker
+mkdir -p server/data/sqlite-archive
+cp server/data/navpilot.db server/data/sqlite-archive/navpilot-pre-postgres.db
+docker compose up -d postgres
+docker compose run --rm --no-deps \
+  -e MIGRATION_RESET_TARGET=true \
+  app node src/migrate-postgres.js
+docker compose up -d
 ```
 
-迁移保留数字 ID、分批导入并重置序列。切换前请备份 SQLite、上传目录和密钥；当前版本仍默认使用 SQLite，完成业务验证后再切换运行时数据层。
+迁移保留数字 ID，复制默认值、主键、唯一索引、`NOT NULL`、外键和删除策略，并重置自增序列。`MIGRATION_RESET_TARGET=true` 会清空 NavPilot PostgreSQL 的 `public` schema，只能在确认目标库正确且 App/Worker 已停写后使用。SQLite 归档、上传目录和 `.navpilot-secret` 至少保留一个发布周期用于回滚。
 
 ```bash
-# 首次部署：填写管理员临时密码及其他配置
+# 首次部署：先设置独立 PostgreSQL 强密码，再填写管理员临时密码及其他配置
+cp .env.example .env
 cp server/.env.example server/.env
 
 # 构建并后台启动
@@ -162,13 +168,13 @@ docker compose ps
 docker compose logs -f app
 ```
 
-默认访问 `http://localhost:8787`。如需修改宿主机端口：
+默认通过 Edge 访问 `http://localhost:8788`；`http://localhost:8787` 是本地调试用的 App 直连地址。如需修改宿主机端口：
 
 ```bash
 NAVPILOT_HTTP_PORT=8080 docker compose up -d
 ```
 
-默认使用 Docker 命名卷，升级或重建容器不会丢失数据库。若要直接使用当前 `server/data/navpilot.db`，可改为宿主机目录挂载（该目录必须允许容器内 UID 1000 写入）：
+默认使用 Docker 命名卷，升级或重建容器不会丢失 PostgreSQL 数据。`navpilot-data` 卷仍保存上传文件、密钥及 SQLite 回滚归档；若要使用宿主机目录（该目录必须允许容器内 UID 1000 写入）：
 
 ```bash
 NAVPILOT_DATA_SOURCE=./server/data docker compose up -d --build
@@ -271,7 +277,7 @@ curl -s http://127.0.0.1:8787/api/health
 17 4 * * 3 MAXMIND_ACCOUNT_ID=123456 MAXMIND_LICENSE_KEY_FILE=/run/secrets/maxmind_license_key /opt/navpilot/scripts/download-geoip.sh >>/var/log/navpilot-geoip.log 2>&1
 ```
 
-### 5. 手动生产部署（单进程）
+### 5. 手动运行（仅开发/诊断）
 
 ```bash
 cd client
@@ -279,12 +285,14 @@ npm run build          # 产出 client/dist
 
 cd ../server
 npm install --production
-npm start               # 后端会自动检测并托管 client/dist，只需暴露一个端口
+NAVPILOT_DB_DRIVER=postgres \
+DATABASE_URL=postgres://navpilot:密码@127.0.0.1:5432/navpilot \
+npm start
 ```
 
-访问 `http://服务器IP:8787` 即可，建议用 `pm2` / `systemd` / Docker 常驻运行，并在前面挂 Nginx 做 HTTPS。
+访问 `http://服务器IP:8787`。该方式不会启动 Edge 和独立 Worker，正式环境建议使用上面的 Docker Compose 四容器结构。
 
-> 如果是从旧版本升级：先将旧的 `nav.db` 做 SQLite 一致性备份并命名为 `navpilot.db`。数据表迁移由 `db.js` 在启动时自动完成。
+> 如果从旧版 SQLite 升级，请使用上一节的停写、归档和 `migrate-postgres.js` 流程；App 不会在启动时隐式覆盖 PostgreSQL。
 
 ## 账户、个人空间与管理后台
 
@@ -292,7 +300,7 @@ npm start               # 后端会自动检测并托管 client/dist，只需暴
 - 不开放匿名自注册。管理员在 `/admin` 的「账户管理」中创建用户，系统生成一次性临时密码，用户首次登录必须修改密码。
 - 首个管理员仅在全新/升级后没有管理员时由 `BOOTSTRAP_ADMIN_USERNAME`、`BOOTSTRAP_ADMIN_DISPLAY_NAME`、`BOOTSTRAP_ADMIN_PASSWORD` 创建。完成首次改密后应从运行环境删除这些变量。
 - 普通用户界面不显示公共空间编辑入口；管理员登录后默认仍为正常浏览模式，可通过与个人空间相同位置的「编辑公共空间」按钮进入编辑态。账户、安全审计、品牌与 AI 设置集中在 `/admin`。
-- 会话保存在服务器 SQLite 中，浏览器使用 HttpOnly Cookie；空闲 24 小时或最长 7 天后失效。生产环境必须使用 HTTPS。
+- 会话保存在 PostgreSQL 中，浏览器使用 HttpOnly Cookie；空闲 24 小时或最长 7 天后失效。生产环境必须使用 HTTPS。
 - 旧版本浏览器身份会迁移为「待认领个人空间」，不会根据昵称自动绑定。管理员创建目标账户后，在后台明确分配。
 - 公共分类和每个用户的个人分类完全独立，同名分类可以分别存在。
 
@@ -322,7 +330,7 @@ npm start               # 后端会自动检测并托管 client/dist，只需暴
 
 扩展只在带 NavPilot 页面标记的网站中响应读取请求，不读取登录 Cookie，也不会自行上传或修改书签；导入前仍会展示完整预览、重复检查和选择列表。
 
-升级前应对 `server/data/navpilot.db` 做 SQLite 一致性备份。新版本使用事务化 `schema_migrations`、外键检查和 public/personal realm 约束；迁移失败会停止启动，不会静默跳过。首次升级会将现有探测明细幂等回填为每日汇总和故障事件，完成后才启动 HTTP 服务。个人旧条目的自动探测在迁移时默认关闭，以避免未经账户确认继续探测。
+SQLite 升级前应先停止 App/Worker 并归档 `server/data/navpilot.db`。迁移工具在单个 PostgreSQL 事务中复制数据、默认值、唯一索引、非空约束、外键和序列；任一步失败都会整体回滚。切换后应分别备份 PostgreSQL、上传目录和 `.navpilot-secret`，SQLite 文件只作为短期回滚归档。
 
 ## 使用说明
 
@@ -350,7 +358,7 @@ npm start               # 后端会自动检测并托管 client/dist，只需暴
 
 ## 已知局限与生产加固
 
-- UI 保存的 AI API Key 在 SQLite/WAL/备份中保持加密；应限制数据目录权限，并将 `.navpilot-secret` 或 `NAVPILOT_SECRET_KEY` 与数据库分开保管。
+- UI 保存的 AI API Key 在 PostgreSQL 和备份中保持加密；应限制数据库及数据目录权限，并将 `.navpilot-secret` 或 `NAVPILOT_SECRET_KEY` 与数据库分开保管。
 - 个人空间已默认禁用 TCP 探测；公共内网目标仍建议在 `healthCheck` 前增加部署网段 allowlist 和 DNS/重定向策略。
 - 当前后台使用轻量 pathname 分支而非路由库；页面继续增加时可引入 React Router。
 - 自动测试覆盖迁移、密码、会话和设置核心逻辑；账户权限矩阵和键盘交互仍建议持续扩充集成测试。
@@ -359,7 +367,6 @@ npm start               # 后端会自动检测并托管 client/dist，只需暴
 
 - 拖拽排序（当前分类/条目排序已有 `sort_order` 字段与 `/reorder` 接口，前端拖拽交互可后续补充）
 - 自动抓取网站 favicon，减少手动选 emoji 的成本
-- PostgreSQL 数据访问适配与迁移工具（当前 SQLite 已使用原始明细、每日汇总、故障事件三层模型）
 - 离线状态变化时接入企业微信 / 钉钉 webhook 告警
 - 探测失败重试机制（当前一次超时/失败即判定离线，容易受网络抖动影响误报）
 - 个人空间"收藏公共空间条目"能力（目前个人空间与公共空间是完全独立的两份数据）

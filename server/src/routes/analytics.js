@@ -117,7 +117,7 @@ router.get("/users", (req, res) => {
       (SELECT COUNT(*) FROM analytics_events e WHERE e.item_owner_id=u.id AND e.event_name='item.clicked') visitCount
     FROM users u
     WHERE u.status!='pending_claim'
-    ORDER BY resourceCount DESC,displayName COLLATE NOCASE
+    ORDER BY resourceCount DESC,LOWER(u.display_name)
   `).all();
   res.json({ items: rows });
 });
@@ -190,7 +190,7 @@ router.get("/summary", (req, res) => {
     .prepare(
       `SELECT COALESCE(c.name,'未分类') name,COUNT(i.id) value,c.id
        FROM items i LEFT JOIN categories c ON c.id=i.category_id
-       WHERE ${resource.sql} GROUP BY i.category_id ORDER BY value DESC LIMIT 12`,
+       WHERE ${resource.sql} GROUP BY i.category_id,c.id,c.name ORDER BY value DESC LIMIT 12`,
     )
     .all(...resource.params);
   const ownership = db
@@ -251,7 +251,7 @@ router.get("/summary", (req, res) => {
     rate:chinaCityCoverageRaw.total ? Number(((Number(chinaCityCoverageRaw.known||0)/chinaCityCoverageRaw.total)*100).toFixed(1)) : 0,
   };
   const cities = db.prepare(`
-    SELECT e.city_name name,MAX(e.country_code) countryCode,COUNT(*) value,
+    SELECT MIN(e.city_name) name,MAX(e.country_code) countryCode,COUNT(*) value,
       COUNT(DISTINCT e.user_id) uniqueVisitors
     FROM analytics_events e
     WHERE e.event_name='item.clicked' AND e.city_name IS NOT NULL AND e.city_name!='' AND ${event.sql}
@@ -259,7 +259,7 @@ router.get("/summary", (req, res) => {
   `).all(...event.params);
 
   const visitorRows = db.prepare(`
-    SELECT e.user_id id,COALESCE(u.display_name,u.username,'匿名用户') name,u.username,
+    SELECT e.user_id id,COALESCE(MAX(u.display_name),MAX(u.username),'匿名用户') name,MAX(u.username) username,
       COUNT(*) value,COUNT(DISTINCT e.item_id) resources,MAX(e.occurred_at_ms) lastActiveAt
     FROM analytics_events e LEFT JOIN users u ON u.id=e.user_id
     WHERE e.event_name='item.clicked' AND ${event.sql}
@@ -280,7 +280,7 @@ router.get("/summary", (req, res) => {
       SELECT e.user_id,MIN(e.occurred_at_ms) firstAt,MAX(e.occurred_at_ms) lastAt
       FROM analytics_events e
       WHERE e.event_name='item.clicked' AND e.user_id IS NOT NULL AND ${allTimeEvent.sql}
-      GROUP BY e.user_id HAVING lastAt>=?
+      GROUP BY e.user_id HAVING MAX(e.occurred_at_ms)>=?
     )
   `).get(from, from, ...allTimeEvent.params, from);
   const cohortEnd = utcWeekStart(to) + 7 * 86400000;
@@ -289,7 +289,7 @@ router.get("/summary", (req, res) => {
     SELECT e.user_id userId,MIN(e.occurred_at_ms) firstAt
     FROM analytics_events e
     WHERE e.event_name='item.clicked' AND e.user_id IS NOT NULL AND ${allTimeEvent.sql}
-    GROUP BY e.user_id HAVING firstAt>=? AND firstAt<?
+    GROUP BY e.user_id HAVING MIN(e.occurred_at_ms)>=? AND MIN(e.occurred_at_ms)<?
   `).all(...allTimeEvent.params, cohortStart, cohortEnd);
   const cohortActivityWhere = eventWhere({ ...selected, from: cohortStart });
   const cohortActivityRows = db.prepare(`
@@ -409,7 +409,7 @@ router.get("/summary", (req, res) => {
     FROM ai_usage_events a WHERE ${aiFilter.sql} GROUP BY day ORDER BY day
   `).all(...aiFilter.params);
   const aiUsers = db.prepare(`
-    SELECT a.actor_user_id id,COALESCE(u.display_name,u.username,'系统任务') name,u.username,
+    SELECT a.actor_user_id id,COALESCE(MAX(u.display_name),MAX(u.username),'系统任务') name,MAX(u.username) username,
       COUNT(*) requests,SUM(COALESCE(a.input_tokens,0)+COALESCE(a.output_tokens,0)) totalTokens,
       ROUND(AVG(a.latency_ms)) averageLatencyMs,ROUND(AVG(a.first_token_ms)) averageFirstTokenMs,
       ROUND(AVG(a.success)*100,1) successRate

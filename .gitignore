@@ -15,6 +15,7 @@ geoip.env
 **/data/*.db-journal
 **/data/.navpilot-secret
 **/data/uploads/
+server/data/sqlite-archive/
 .env
 .env.local
 *.log

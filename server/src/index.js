@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const express = require('express');
 const compression = require('compression');
+const db = require('./db');
 
 const categoriesRouter = require('./routes/categories');
 const itemsRouter = require('./routes/items');
@@ -76,7 +77,7 @@ function createApp() {
   app.use('/api/transfer', transferRouter);
   app.use('/api/workspace', workspaceRouter);
   app.use('/api/alerts', alertsRouter);
-  app.get('/api/health', (req, res) => res.json({ ok: true, geoIp:getGeoStatus() }));
+  app.get('/api/health', (req, res) => res.json({ ok: true, database:{driver:db.dialect || 'sqlite'}, geoIp:getGeoStatus() }));
   app.use('/uploads', express.static(require('./services/uploadService').getUploadRoot(), {
     index:false,
     fallthrough:false,
@@ -108,7 +109,7 @@ function createApp() {
   }
   app.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
-    console.error('[server]', error.message);
+    console.error('[server]', error.stack || error.message);
     return res.status(error.status || 500).json({ code: error.code || 'INTERNAL_ERROR', error: error.status ? error.message : '服务器内部错误' });
   });
   return app;
@@ -118,7 +119,7 @@ async function start() {
   const bootstrapped = await bootstrapAdmin();
   if (bootstrapped) console.log(`[auth] 已创建首个管理员: ${bootstrapped.username}，首次登录必须修改密码`);
   cleanupSessions();
-  const healthInitialization = createHealthRepository(require('./db')).initialize();
+  const healthInitialization = createHealthRepository(db).initialize();
   if (!healthInitialization.skipped) console.log(`[health-data] 历史回填完成 events=${healthInitialization.eventCount} daily=${healthInitialization.dailyCount} incidents=${healthInitialization.incidentCount} 耗时=${healthInitialization.durationMs}ms`);
   await initializeGeoIp();
   const app = createApp();
