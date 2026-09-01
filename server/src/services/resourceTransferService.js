@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const defaultDb = require("../db");
 const { createAccessControlService } = require("./accessControlService");
+const { recordMonitoringConfig } = require("./monitoringConfigHistory");
 
 function problem(code, message, status = 400) {
   return Object.assign(new Error(message), { code, status });
@@ -33,7 +34,7 @@ function itemRows(db, realmValue) {
   const current = normalizeRealm(realmValue);
   return db
     .prepare(
-      "SELECT id,name,url,icon,description,tags_json,category_id,sort_order,check_enabled,check_method,check_target,visibility FROM items WHERE scope=? AND owner_id IS ? ORDER BY sort_order,id",
+      "SELECT id,name,url,icon,description,tags_json,category_id,sort_order,check_enabled,check_method,check_target,check_interval_minutes,visibility FROM items WHERE scope=? AND owner_id IS ? ORDER BY sort_order,id",
     )
     .all(current.scope, current.ownerId);
 }
@@ -135,6 +136,7 @@ function selectionSnapshot(
       checkEnabled: Boolean(row.check_enabled),
       checkMethod: row.check_method,
       checkTarget: row.check_target || "",
+      checkIntervalMinutes: Number(row.check_interval_minutes) || 5,
       ...(current.scope === 'public' ? { access: {
         visibility: row.visibility || 'public',
         grants: [
@@ -188,6 +190,7 @@ function normalizeNavpilot(payload) {
         ? row.checkMethod
         : "none",
       checkTarget: String(row.checkTarget || "").slice(0, 500),
+      checkIntervalMinutes: [5,10,15,30,60,120,300,480,720,1440].includes(Number(row.checkIntervalMinutes)) ? Number(row.checkIntervalMinutes) : 5,
       access: payloadVersion >= 2 && row.access ? {
         visibility: ['public','authenticated','restricted'].includes(row.access.visibility) ? row.access.visibility : 'public',
         grants: (Array.isArray(row.access.grants) ? row.access.grants : []).slice(0,200).map(grant => ({
@@ -393,7 +396,7 @@ function importNormalized(
           )
           .get(current.scope, current.ownerId, categoryId).max;
       const importedId = Number(db.prepare(
-        "INSERT INTO items(name,url,icon,description,tags_json,category_id,sort_order,check_method,check_target,check_enabled,scope,owner_id,version,updated_at) VALUES(?,?,?,?,?,?,?, ?,NULL,0,?,?,1,datetime('now'))",
+        "INSERT INTO items(name,url,icon,description,tags_json,category_id,sort_order,check_method,check_target,check_enabled,check_interval_minutes,next_check_at_ms,scope,owner_id,version,updated_at) VALUES(?,?,?,?,?,?,?, ?,NULL,0,?,NULL,?,?,1,datetime('now'))",
       ).run(
         item.name,
         item.url,
@@ -403,9 +406,11 @@ function importNormalized(
         categoryId,
         max + 1,
         item.checkMethod === "http" ? "http" : "none",
+        item.checkIntervalMinutes || 5,
         current.scope,
         current.ownerId,
       ).lastInsertRowid);
+      recordMonitoringConfig(db,db.prepare('SELECT * FROM items WHERE id=?').get(importedId),{ source:'imported' });
       if (current.scope === 'public') {
         let itemAccess = data.version >= 2 && item.access ? item.access : access.inheritedCategoryAccess(categoryId);
         if (itemAccess.grants?.length) {

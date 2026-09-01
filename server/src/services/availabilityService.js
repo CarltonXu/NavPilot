@@ -1,4 +1,5 @@
 const { createHealthRepository, retentionDays, DAY_MS } = require('./healthRepository');
+const { loadMonitoringSegments } = require('./monitoringConfigHistory');
 
 const DEGRADED_LATENCY_MS = Math.max(250, Number(process.env.AVAILABILITY_DEGRADED_MS) || 1500);
 const repositories = new WeakMap();
@@ -82,6 +83,8 @@ function summarize(item, rows, dayKeys, includeDetails, incidents = [], includeD
     ownerName:item.ownerName || null,
     categoryName:item.categoryName || item.category_name || null,
     checkEnabled:Boolean(item.check_enabled ?? item.checkEnabled),
+    checkIntervalMinutes:Number(item.check_interval_minutes ?? item.checkIntervalMinutes) || 5,
+    nextCheckAtMs:Number(item.next_check_at_ms ?? item.nextCheckAtMs) || null,
     status:currentStatus,
     state:currentStatus === 'online' && currentLatency != null && currentLatency >= DEGRADED_LATENCY_MS ? 'degraded' : currentStatus,
     latencyMs:currentLatency,
@@ -128,17 +131,21 @@ function availabilityDayForItem(db, item, date, options = {}) {
   const detailAvailable = from >= Date.now() - rawRetentionDays * DAY_MS;
   const events = detailAvailable ? repository.loadRaw(item.id,from,to) : [];
   const incidents = repository.loadIncidents(item.id,from,to);
+  const scheduleSegments = loadMonitoringSegments(db,item,from,to);
   const summary = summarize(item,row ? [row] : [],[date],true,incidents);
   const bucket = summary.daily[0];
   return {
     ...summary,
     date,
+    fromAtMs:from,
+    toAtMs:to,
     status:bucket.status,
     state:bucket.status,
     availability:bucket.availability,
     averageLatencyMs:bucket.averageLatencyMs,
     checks:bucket.checks,
     events:[...events].reverse(),
+    scheduleSegments,
     incidents,
     detailAvailable,
     detailRetentionDays:rawRetentionDays,

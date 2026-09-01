@@ -17,6 +17,9 @@ export default function AvailabilityManagement({ refreshToken = 0 }) {
   const [loading, setLoading] = useState(true);
   const [checkingAll, setCheckingAll] = useState(false);
   const [checkingId, setCheckingId] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkInterval, setBulkInterval] = useState(5);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [error, setError] = useState("");
   const load = useCallback(async () => {
     setLoading(true);
@@ -41,6 +44,26 @@ export default function AvailabilityManagement({ refreshToken = 0 }) {
     try { await api.checkAdminAvailabilityAll(scope); await load(); }
     catch (cause) { setError(errorMessage(cause)); }
     finally { setCheckingAll(false); }
+  }
+  const intervalLabel = (minutes) => minutes < 60 ? `${minutes} ${zh ? "分钟" : "min"}` : `${minutes / 60} ${zh ? "小时" : "hr"}`;
+  const allFilteredSelected = filtered.length > 0 && filtered.every((item) => selectedIds.has(item.itemId));
+  function toggleAllFiltered() {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      filtered.forEach((item) => allFilteredSelected ? next.delete(item.itemId) : next.add(item.itemId));
+      return next;
+    });
+  }
+  async function bulkConfigure(mode) {
+    if (!selectedIds.size || bulkBusy) return;
+    setBulkBusy(true); setError("");
+    try {
+      const result = await api.bulkConfigureAdminAvailability([...selectedIds],mode,mode === "interval" ? bulkInterval : null);
+      setSelectedIds(new Set());
+      await load();
+      if (result.skippedCount) setError(zh ? `${result.updatedCount} 个资源已更新，${result.skippedCount} 个未开启探测的资源已跳过。` : `${result.updatedCount} updated; ${result.skippedCount} disabled resources skipped.`);
+    } catch (cause) { setError(errorMessage(cause)); }
+    finally { setBulkBusy(false); }
   }
   const summary = data.summary || {};
   const stats = [
@@ -70,14 +93,16 @@ export default function AvailabilityManagement({ refreshToken = 0 }) {
           </div>
           <em>{zh ? `显示 ${filtered.length} 个资源` : `${filtered.length} resources`}</em>
         </header>
+        <div className="availability-monitoring-bulk"><button type="button" className={`icon-btn ${allFilteredSelected ? "active" : ""}`} onClick={toggleAllFiltered}><span className="batch-select-box">{allFilteredSelected && <Icon name="check" size={11}/>}</span>{allFilteredSelected ? (zh ? "取消全选" : "Clear all") : (zh ? "选择当前结果" : "Select results")}</button>{selectedIds.size > 0 && <><strong>{zh ? `已选 ${selectedIds.size} 项` : `${selectedIds.size} selected`}</strong><button type="button" className="icon-btn" disabled={bulkBusy} onClick={() => bulkConfigure("enable")}><Icon name="monitor" size={14}/>{zh ? "开启检测" : "Enable"}</button><button type="button" className="icon-btn" disabled={bulkBusy} onClick={() => bulkConfigure("disable")}><Icon name="minus" size={14}/>{zh ? "关闭检测" : "Disable"}</button><select value={bulkInterval} disabled={bulkBusy} onChange={(event) => setBulkInterval(Number(event.target.value))}>{[5,10,15,30,60,120,300,480,720,1440].map((value) => <option value={value} key={value}>{intervalLabel(value)}</option>)}</select><button type="button" className="icon-btn primary" disabled={bulkBusy} onClick={() => bulkConfigure("interval")}><Icon name={bulkBusy ? "refresh" : "clock"} size={14}/>{zh ? "设置周期" : "Set interval"}</button></>}</div>
         <div className="availability-admin-table-head"><span>{zh ? "资源" : "Resource"}</span><span>{zh ? "最近可用性" : "Recent uptime"}</span><span>{zh ? "状态" : "Status"}</span><span>{zh ? "响应" : "Response"}</span><span>{zh ? "最后检测" : "Last checked"}</span><span /></div>
         <div className="availability-admin-rows">
           {filtered.map((item) => {
             const itemState = item.checkEnabled ? item.state : "unknown";
             return <article className="availability-admin-row" key={item.itemId}>
               <button type="button" className="availability-admin-row-main" onClick={() => setSelected(item)} aria-label={`${item.name} ${zh ? "可用性详情" : "availability details"}`}>
+                <span className={`availability-row-selector ${selectedIds.has(item.itemId) ? "selected" : ""}`} role="checkbox" aria-checked={selectedIds.has(item.itemId)} tabIndex={0} onClick={(event) => { event.stopPropagation(); setSelectedIds((current) => { const next = new Set(current); next.has(item.itemId) ? next.delete(item.itemId) : next.add(item.itemId); return next; }); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); setSelectedIds((current) => { const next = new Set(current); next.has(item.itemId) ? next.delete(item.itemId) : next.add(item.itemId); return next; }); } }}>{selectedIds.has(item.itemId) && <Icon name="check" size={11}/>}</span>
                 <span className={`availability-resource-icon ${itemState}`}><Icon name="link" size={15}/></span>
-                <span className="availability-resource-copy"><strong>{item.name}</strong><small title={item.url}>{item.url}</small><em>{item.scope === "personal" ? (item.ownerName || (zh ? "个人空间" : "Personal")) : (item.categoryName || (zh ? "公共空间" : "Public"))}</em></span>
+                <span className="availability-resource-copy"><strong>{item.name}</strong><small title={item.url}>{item.url}</small><em>{item.scope === "personal" ? (item.ownerName || (zh ? "个人空间" : "Personal")) : (item.categoryName || (zh ? "公共空间" : "Public"))} · {item.checkEnabled ? (zh ? `每 ${intervalLabel(item.checkIntervalMinutes)}` : `Every ${intervalLabel(item.checkIntervalMinutes)}`) : (zh ? "未启用" : "Disabled")}</em></span>
               </button>
               <AvailabilityStrip value={item} className="admin-row-strip" tooltipPlacement="below" />
               <span className={`availability-state ${itemState}`}><i />{item.checkEnabled ? stateLabel(itemState, locale) : (zh ? "未启用" : "Disabled")}</span>

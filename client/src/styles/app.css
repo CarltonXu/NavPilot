@@ -587,6 +587,7 @@
 .batch-move-bar>span { color: var(--accent); }
 .batch-move-bar select { min-width: 170px; max-width: 280px; padding: 6px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-elevated); color: var(--text-primary); font: 11px var(--font-sans); }
 .batch-move-bar .icon-btn { min-height: 30px; padding: 5px 9px; font-size: 11px; }
+.batch-monitoring-controls { display:inline-flex; align-items:center; flex-wrap:wrap; gap:5px; padding-left:7px; border-left:1px solid var(--border); }.batch-monitoring-controls select { min-width:82px; max-width:100px; }
 .batch-select-toggle.active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 .batch-select-box { width: 15px; height: 15px; display: inline-grid; place-items: center; flex: 0 0 auto; border: 1px solid var(--text-tertiary); border-radius: 4px; }
 .batch-select-toggle.active .batch-select-box { color: #fff; border-color: var(--accent); background: var(--accent); }

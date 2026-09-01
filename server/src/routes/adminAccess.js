@@ -5,6 +5,7 @@ const { auditWith } = require('../services/eventService');
 const { createAccessControlService } = require('../services/accessControlService');
 const { checkAndPersist, checkItems } = require('../services/healthCheck');
 const { availabilityForItems, clampDays } = require('../services/availabilityService');
+const { recordMonitoringConfig } = require('../services/monitoringConfigHistory');
 
 const router = express.Router();
 const access = createAccessControlService(db);
@@ -36,6 +37,36 @@ router.post('/availability/check-all', async (req, res) => {
       : await checkItems({ scope, ownerId:scope === 'public' ? null : undefined });
     return res.json(result);
   } catch (error) { return fail(res, error, 'AVAILABILITY_CHECK_FAILED'); }
+});
+
+router.post('/availability/bulk-config', (req, res) => {
+  try {
+    const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(Number))];
+    const mode = String(req.body?.mode || '');
+    const intervals = new Set([5,10,15,30,60,120,300,480,720,1440]);
+    const interval = Number(req.body?.intervalMinutes);
+    if (!ids.length || ids.length > 500 || ids.some((id) => !Number.isInteger(id) || id <= 0)) return res.status(400).json({ code:'ITEM_IDS_INVALID', error:'请选择 1 到 500 个资源' });
+    if (!['enable','disable','interval'].includes(mode)) return res.status(400).json({ code:'MONITORING_MODE_INVALID', error:'批量探测操作无效' });
+    if (mode === 'interval' && !intervals.has(interval)) return res.status(400).json({ code:'CHECK_INTERVAL_INVALID', error:'检测周期无效' });
+    const placeholders = ids.map(() => '?').join(',');
+    const existing = db.prepare(`SELECT * FROM items WHERE id IN (${placeholders})`).all(...ids);
+    if (existing.length !== ids.length) return res.status(404).json({ code:'ITEM_NOT_FOUND', error:'部分资源不存在' });
+    const now = Date.now();
+    let changed = 0, skipped = 0;
+    db.transaction(() => {
+      if (mode === 'enable') changed = db.prepare(`UPDATE items SET check_method=CASE WHEN check_method='none' THEN 'http' ELSE check_method END,check_enabled=1,next_check_at_ms=?,version=version+1,updated_at=datetime('now') WHERE id IN (${placeholders})`).run(now,...ids).changes;
+      if (mode === 'disable') changed = db.prepare(`UPDATE items SET check_method='none',check_enabled=0,next_check_at_ms=NULL,version=version+1,updated_at=datetime('now') WHERE id IN (${placeholders})`).run(...ids).changes;
+      if (mode === 'interval') {
+        skipped = existing.filter((item) => !item.check_enabled).length;
+        changed = db.prepare(`UPDATE items SET check_interval_minutes=?,next_check_at_ms=?,version=version+1,updated_at=datetime('now') WHERE check_enabled=1 AND id IN (${placeholders})`).run(interval,now + interval * 60000,...ids).changes;
+      }
+      const configured = db.prepare(`SELECT * FROM items WHERE id IN (${placeholders})`).all(...ids)
+        .filter((item) => mode !== 'interval' || item.check_enabled);
+      configured.forEach((item) => recordMonitoringConfig(db,item,{ effectiveAtMs:now,source:'admin_bulk' }));
+      auditWith(db,req,'availability.bulk_configured',{targetType:'items',metadata:{mode,intervalMinutes:mode==='interval'?interval:null,affectedIds:ids,changedCount:changed,skippedCount:skipped}});
+    })();
+    return res.json({ updatedCount:changed,skippedCount:skipped,ids });
+  } catch (error) { return fail(res,error,'AVAILABILITY_BULK_CONFIG_FAILED'); }
 });
 
 router.post('/availability/:id/check', async (req, res) => {

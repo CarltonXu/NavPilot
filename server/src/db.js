@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const Database = require('better-sqlite3');
+const { backfillMonitoringConfigHistory } = require('./services/monitoringConfigHistory');
 
 const DEFAULT_DB_PATH = path.join(__dirname, '..', 'data', 'navpilot.db');
 
@@ -87,6 +88,8 @@ function createLatestSchema(db) {
       check_enabled INTEGER NOT NULL DEFAULT 1,
       check_method TEXT NOT NULL DEFAULT 'http' CHECK(check_method IN ('http','tcp','none')),
       check_target TEXT,
+      check_interval_minutes INTEGER NOT NULL DEFAULT 5,
+      next_check_at_ms INTEGER,
       scope TEXT NOT NULL DEFAULT 'public' CHECK(scope IN ('public','personal')),
       owner_id TEXT REFERENCES users(id) ON DELETE CASCADE,
       visibility TEXT NOT NULL DEFAULT 'public' CHECK(visibility IN ('public','authenticated','restricted')),
@@ -225,8 +228,22 @@ function createLatestSchema(db) {
       owner_id TEXT,
       status TEXT NOT NULL CHECK(status IN ('online','offline','unknown')),
       latency_ms INTEGER,
+      check_interval_minutes INTEGER NOT NULL DEFAULT 5,
+      trigger_type TEXT NOT NULL DEFAULT 'scheduled' CHECK(trigger_type IN ('scheduled','manual','configuration')),
       checked_at_ms INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS resource_check_config_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+      check_enabled INTEGER NOT NULL,
+      check_method TEXT NOT NULL,
+      check_target TEXT,
+      check_interval_minutes INTEGER NOT NULL DEFAULT 5,
+      schedule_anchor_at_ms INTEGER,
+      effective_at_ms INTEGER NOT NULL,
+      source TEXT NOT NULL DEFAULT 'configuration'
+    );
+    CREATE INDEX IF NOT EXISTS resource_check_config_item_time_idx ON resource_check_config_history(item_id,effective_at_ms,id);
     CREATE TABLE IF NOT EXISTS resource_health_daily (
       item_id INTEGER NOT NULL,
       day TEXT NOT NULL,
@@ -786,6 +803,24 @@ function migrateCurrentSchema(db) {
       db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(21)').run();
     })();
   }
+  if (!applied.has(22)) {
+    db.transaction(() => {
+      addColumnIfMissing(db, 'items', 'check_interval_minutes INTEGER NOT NULL DEFAULT 5');
+      addColumnIfMissing(db, 'items', 'next_check_at_ms INTEGER');
+      addColumnIfMissing(db, 'resource_health_events', 'check_interval_minutes INTEGER NOT NULL DEFAULT 5');
+      addColumnIfMissing(db, 'resource_health_events', "trigger_type TEXT NOT NULL DEFAULT 'scheduled' CHECK(trigger_type IN ('scheduled','manual','configuration'))");
+      db.prepare('UPDATE items SET check_interval_minutes=5 WHERE check_interval_minutes NOT IN (5,10,15,30,60,120,300,480,720,1440)').run();
+      db.prepare('UPDATE items SET next_check_at_ms=? WHERE check_enabled=1 AND next_check_at_ms IS NULL').run(Date.now());
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(22)').run();
+    })();
+  }
+  if (!applied.has(23)) {
+    db.transaction(() => {
+      createLatestSchema(db);
+      backfillMonitoringConfigHistory(db);
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(23)').run();
+    })();
+  }
 }
 
 function createDatabase(filename = DEFAULT_DB_PATH) {
@@ -808,6 +843,7 @@ function createDatabase(filename = DEFAULT_DB_PATH) {
       db.prepare("INSERT OR IGNORE INTO settings(key,value) VALUES('ai_personal_enabled','false')").run();
       db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(1)').run();
     })();
+    backfillMonitoringConfigHistory(db);
   }
   const integrity = db.pragma('integrity_check', { simple: true });
   if (integrity !== 'ok') throw new Error(`Database integrity check failed: ${integrity}`);
@@ -818,6 +854,40 @@ const usePostgres = String(process.env.NAVPILOT_DB_DRIVER || '').toLowerCase() =
 const db = usePostgres
   ? require('./db/postgresCompat').createPostgresDatabase()
   : createDatabase(process.env.NAVPILOT_DB_PATH || DEFAULT_DB_PATH);
+if (usePostgres) {
+  // App and worker processes start together. Serialize runtime migrations so
+  // PostgreSQL does not race while creating implicit BIGSERIAL sequences.
+  db.exec('SELECT pg_advisory_lock(2026090101)');
+  try {
+    db.exec('ALTER TABLE items ADD COLUMN IF NOT EXISTS check_interval_minutes INTEGER NOT NULL DEFAULT 5');
+    db.exec('ALTER TABLE items ADD COLUMN IF NOT EXISTS next_check_at_ms BIGINT');
+    db.exec('ALTER TABLE resource_health_events ADD COLUMN IF NOT EXISTS check_interval_minutes INTEGER NOT NULL DEFAULT 5');
+    db.exec("ALTER TABLE resource_health_events ADD COLUMN IF NOT EXISTS trigger_type TEXT NOT NULL DEFAULT 'scheduled'");
+    db.prepare('UPDATE items SET check_interval_minutes=5 WHERE check_interval_minutes NOT IN (5,10,15,30,60,120,300,480,720,1440)').run();
+    db.prepare('UPDATE items SET next_check_at_ms=? WHERE check_enabled=1 AND next_check_at_ms IS NULL').run(Date.now());
+    db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(22)').run();
+    db.exec(`CREATE TABLE IF NOT EXISTS resource_check_config_history (
+      id BIGSERIAL PRIMARY KEY,
+      item_id BIGINT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+      check_enabled BIGINT NOT NULL,
+      check_method TEXT NOT NULL,
+      check_target TEXT,
+      check_interval_minutes BIGINT NOT NULL DEFAULT 5,
+      schedule_anchor_at_ms BIGINT,
+      effective_at_ms BIGINT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'configuration'
+    )`);
+    db.exec('CREATE INDEX IF NOT EXISTS resource_check_config_item_time_idx ON resource_check_config_history(item_id,effective_at_ms,id)');
+    if (!db.prepare('SELECT 1 FROM schema_migrations WHERE version=23').get()) {
+      db.transaction(() => {
+        backfillMonitoringConfigHistory(db);
+        db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES(23)').run();
+      })();
+    }
+  } finally {
+    db.exec('SELECT pg_advisory_unlock(2026090101)');
+  }
+}
 db.createDatabase = createDatabase;
 db.DEFAULT_DB_PATH = DEFAULT_DB_PATH;
 module.exports = db;

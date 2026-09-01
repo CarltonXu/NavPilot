@@ -40,9 +40,30 @@ test("manual checks probe resources even when scheduled monitoring is disabled",
     assert.equal(result.status, "online");
     assert.equal(requested, "https://manual-check.example/");
     assert.equal(service.getItem(current, item.id).status, "online");
+    const event = db.prepare("SELECT trigger_type,check_interval_minutes FROM resource_health_events WHERE item_id=? ORDER BY id DESC").get(item.id);
+    assert.equal(event.trigger_type,"manual");
+    assert.equal(event.check_interval_minutes,5);
   } finally {
     axios.head = originalHead;
   }
+});
+
+test("resources validate and preserve independent monitoring intervals", () => {
+  const owner = user("interval-user"), current = realm("personal",owner), service = createNavigationService(db);
+  const item = service.createItem(current,{ name:"Slow target",url:"https://slow.example",check_method:"http",check_interval_minutes:480 }).value;
+  assert.equal(item.check_interval_minutes,480);
+  assert.ok(item.next_check_at_ms > Date.now());
+  const disabled = service.updateItem(current,item.id,{ check_enabled:false }).value;
+  assert.equal(disabled.check_enabled,0);
+  assert.equal(disabled.check_interval_minutes,480);
+  assert.equal(disabled.next_check_at_ms,null);
+  const enabled = service.updateItem(current,item.id,{ check_enabled:true }).value;
+  assert.equal(enabled.check_method,"http");
+  assert.equal(enabled.check_interval_minutes,480);
+  assert.ok(enabled.next_check_at_ms > Date.now());
+  const configHistory = db.prepare('SELECT check_enabled,check_method,check_interval_minutes FROM resource_check_config_history WHERE item_id=? ORDER BY effective_at_ms,id').all(item.id);
+  assert.deepEqual(configHistory.map((row) => [row.check_enabled,row.check_method,row.check_interval_minutes]),[[1,'http',480],[0,'none',480],[1,'http',480]]);
+  assert.throws(() => service.updateItem(current,item.id,{ check_interval_minutes:7 }), (error) => error.code === "CHECK_INTERVAL_INVALID");
 });
 
 test("latest schema includes versions and AI execution tables", () => {
@@ -94,6 +115,8 @@ test("latest schema includes versions and AI execution tables", () => {
   assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='resource_health_daily'").get());
   assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='resource_health_incidents'").get());
   assert.ok(db.prepare('SELECT 1 FROM schema_migrations WHERE version=21').get());
+  assert.ok(db.prepare('SELECT 1 FROM schema_migrations WHERE version=23').get());
+  assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='resource_check_config_history'").get());
   assert.ok(itemColumns.includes("tags_json"));
   assert.ok(
     [

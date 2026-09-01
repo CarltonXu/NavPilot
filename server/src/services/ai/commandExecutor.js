@@ -4,6 +4,7 @@ const db = require("../../db");
 const { createNavigationService, realm } = require("../navigationService");
 const { auditWith } = require("../eventService");
 const { loadPlan, serializePlan, planError, hash } = require("./planService");
+const { recordMonitoringConfig } = require("../monitoringConfigHistory");
 const navigation = createNavigationService(db);
 function executionByKey(actorId, key, requestHash) {
   const row = db
@@ -161,7 +162,7 @@ function restoreItem(current, snapshot, { deleted = false } = {}) {
       .get(snapshot.id);
     if (exists) throw planError("UNDO_CONFLICT", "原条目 ID 已被占用", 409);
     db.prepare(
-      `INSERT INTO items(id,name,url,icon,description,tags_json,category_id,sort_order,check_method,check_target,check_enabled,scope,owner_id,status,version,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,datetime('now'))`,
+      `INSERT INTO items(id,name,url,icon,description,tags_json,category_id,sort_order,check_method,check_target,check_enabled,check_interval_minutes,next_check_at_ms,scope,owner_id,status,version,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,datetime('now'))`,
     ).run(
       snapshot.id,
       snapshot.name,
@@ -174,10 +175,13 @@ function restoreItem(current, snapshot, { deleted = false } = {}) {
       snapshot.checkMethod,
       snapshot.checkTarget,
       snapshot.checkEnabled ? 1 : 0,
+      snapshot.checkIntervalMinutes || 5,
+      snapshot.checkEnabled ? Date.now() + (snapshot.checkIntervalMinutes || 5) * 60000 : null,
       current.scope,
       current.ownerId,
       snapshot.status || "unknown",
     );
+    recordMonitoringConfig(db,db.prepare('SELECT * FROM items WHERE id=?').get(snapshot.id),{ source:'restored' });
     return;
   }
   navigation.updateItem(current, snapshot.id, {
@@ -190,6 +194,7 @@ function restoreItem(current, snapshot, { deleted = false } = {}) {
     check_method: snapshot.checkMethod,
     check_target: snapshot.checkTarget,
     check_enabled: snapshot.checkEnabled,
+    check_interval_minutes: snapshot.checkIntervalMinutes || 5,
   });
 }
 function applyInverse(current, operation) {

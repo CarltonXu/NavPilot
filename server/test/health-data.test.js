@@ -7,6 +7,7 @@ process.env.NODE_ENV = 'test';
 const db = require('../src/db');
 const { createHealthRepository, DAY_MS } = require('../src/services/healthRepository');
 const { availabilityForItems, availabilityDayForItem } = require('../src/services/availabilityService');
+const { recordMonitoringConfig } = require('../src/services/monitoringConfigHistory');
 
 function createItem(name = 'Health data resource') {
   const info = db.prepare("INSERT INTO items(name,url,scope,check_enabled,check_method) VALUES(?,?,'public',1,'http')")
@@ -64,4 +65,28 @@ test('large raw history is backfilled once and summaries never expand raw event 
   assert.equal(cleanup.deleted > 0,true);
   assert.equal(db.prepare('SELECT COUNT(*) count FROM resource_health_events').get().count,before-cleanup.deleted);
   assert.equal(db.prepare('SELECT COUNT(*) count FROM resource_health_daily WHERE item_id=?').get(item.id).count >= 40,true);
+});
+
+test('daily availability returns independent configuration segments for every same-day change', () => {
+  const item = createItem('Changing interval history');
+  const date = new Date().toISOString().slice(0,10);
+  const from = Date.parse(`${date}T00:00:00Z`);
+  db.prepare('DELETE FROM resource_check_config_history WHERE item_id=?').run(item.id);
+  recordMonitoringConfig(db,{ ...item,check_enabled:1,check_method:'http',check_interval_minutes:5,next_check_at_ms:from + 300000 },{ effectiveAtMs:from,source:'test' });
+  recordMonitoringConfig(db,{ ...item,check_enabled:1,check_method:'http',check_interval_minutes:60,next_check_at_ms:from + 3 * 3600000 },{ effectiveAtMs:from + 2 * 3600000,source:'test' });
+  recordMonitoringConfig(db,{ ...item,check_enabled:0,check_method:'none',check_interval_minutes:60,next_check_at_ms:null },{ effectiveAtMs:from + 4 * 3600000,source:'test' });
+  db.prepare("UPDATE items SET check_enabled=0,check_method='none',check_interval_minutes=60,updated_at=datetime('now') WHERE id=?").run(item.id);
+  const current = db.prepare('SELECT * FROM items WHERE id=?').get(item.id);
+  const day = availabilityDayForItem(db,current,date);
+  assert.equal(day.fromAtMs,from);
+  assert.equal(day.toAtMs,from + DAY_MS);
+  assert.deepEqual(day.scheduleSegments.map((segment) => ({
+    startAtMs:segment.startAtMs,
+    enabled:segment.checkEnabled,
+    interval:segment.checkIntervalMinutes,
+  })),[
+    { startAtMs:from,enabled:true,interval:5 },
+    { startAtMs:from + 2 * 3600000,enabled:true,interval:60 },
+    { startAtMs:from + 4 * 3600000,enabled:false,interval:60 },
+  ]);
 });

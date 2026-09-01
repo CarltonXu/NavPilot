@@ -82,7 +82,7 @@ async function checkAndPersist(item, options = {}) {
   const checkedAtMs = Date.now();
   db.transaction(() => {
     db.prepare(`UPDATE items SET status = ?, latency_ms = ?, last_checked_at = datetime('now') WHERE id = ?`).run(result.status, result.latencyMs, item.id);
-    healthRepository.record(item,result,checkedAtMs);
+    healthRepository.record(item,result,checkedAtMs,{ triggerType:options.triggerType || (options.force ? 'manual' : 'scheduled') });
   })();
   await processCheckAlert(item, result);
   return result;
@@ -99,7 +99,7 @@ async function checkItems({ scope = null, ownerId = undefined, force = false } =
     while (true) {
       const index = cursor++;
       if (index >= items.length) return;
-      try { results[index] = await checkAndPersist(items[index], { force }); }
+      try { results[index] = await checkAndPersist(items[index], { force, triggerType:force ? 'manual' : 'scheduled' }); }
       catch { results[index] = { status:'unknown', latencyMs:null }; }
     }
   }
@@ -114,4 +114,35 @@ async function checkAllItems() {
   return checkItems();
 }
 
-module.exports = { checkItem, checkAndPersist, checkItems, checkAllItems };
+async function checkDueItems({ now = Date.now() } = {}) {
+  const due = db.prepare(`SELECT * FROM items WHERE check_enabled=1 AND check_method!='none'
+    AND (next_check_at_ms IS NULL OR next_check_at_ms<=?) ORDER BY COALESCE(next_check_at_ms,0),id LIMIT ?`)
+    .all(now,Math.max(1,Math.min(2000,Number(process.env.CHECK_DUE_BATCH_SIZE) || 500)));
+  const claimed = [];
+  const claim = db.prepare(`UPDATE items SET next_check_at_ms=? WHERE id=? AND check_enabled=1
+    AND (next_check_at_ms IS NULL OR next_check_at_ms<=?)`);
+  db.transaction(() => {
+    for (const item of due) {
+      const interval = Number(item.check_interval_minutes) || 5;
+      const next = now + interval * 60000;
+      if (claim.run(next,item.id,now).changes) claimed.push({ ...item, next_check_at_ms:next });
+    }
+  })();
+  const results = new Array(claimed.length);
+  let cursor = 0;
+  async function worker() {
+    while (true) {
+      const index = cursor++;
+      if (index >= claimed.length) return;
+      try { results[index] = await checkAndPersist(claimed[index], { triggerType:'scheduled' }); }
+      catch { results[index] = { status:'unknown', latencyMs:null }; }
+    }
+  }
+  const concurrency = Math.min(Math.max(1,Number(process.env.CHECK_CONCURRENCY) || 16),claimed.length || 1);
+  await Promise.all(Array.from({ length:concurrency },worker));
+  const counts = { online:0,offline:0,unknown:0 };
+  results.forEach((result) => { counts[result?.status] = (counts[result?.status] || 0) + 1; });
+  return { total:claimed.length,done:results.length,...counts };
+}
+
+module.exports = { checkItem, checkAndPersist, checkItems, checkAllItems, checkDueItems };

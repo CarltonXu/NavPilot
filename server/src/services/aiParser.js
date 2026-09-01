@@ -2,6 +2,7 @@ const axios = require("axios");
 const db = require("../db");
 const { getEffectiveAiConfig } = require("./settingsService");
 const { normalizeTags } = require("./navigationService");
+const { recordMonitoringConfig } = require("./monitoringConfigHistory");
 
 const PROMPTS = {
   "zh-CN": `你是 NavPilot 的导航助手。用户会用自然语言描述想要添加的一个或多个网站导航条目。
@@ -160,6 +161,7 @@ function persistItems(items, opts = {}) {
           ownerId,
         ).lastInsertRowid,
       );
+      recordMonitoringConfig(db,db.prepare('SELECT * FROM items WHERE id=?').get(id),{ source:'ai_created' });
       created.push(id);
     }
   })();

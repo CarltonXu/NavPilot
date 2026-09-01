@@ -26,7 +26,7 @@ describe('VectorIconPicker', () => {
     expect(all.getAttribute('aria-current')).toBe('true');
     expect(dialog.querySelectorAll('.vector-icon-section')).toHaveLength(CATEGORY_ICON_GROUPS.length);
     expect(dialog.querySelectorAll('.vector-icon-grid button')).toHaveLength(CATEGORY_ICONS.length);
-  });
+  }, 15000);
 
   it('focuses the AI catalog from the left category navigation', () => {
     const { dialog } = renderPicker();

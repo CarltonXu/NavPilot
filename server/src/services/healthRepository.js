@@ -15,7 +15,7 @@ function retentionDays(value = process.env.HEALTH_RAW_RETENTION_DAYS) {
 
 function createHealthRepository(db = defaultDb) {
   const insertRaw = db.prepare(`INSERT INTO resource_health_events
-    (item_id,item_name,scope,owner_id,status,latency_ms,checked_at_ms) VALUES(?,?,?,?,?,?,?)`);
+    (item_id,item_name,scope,owner_id,status,latency_ms,check_interval_minutes,trigger_type,checked_at_ms) VALUES(?,?,?,?,?,?,?,?,?)`);
   const upsertDaily = db.prepare(`INSERT INTO resource_health_daily
     (item_id,day,item_name,item_url,scope,owner_id,checks,online_count,offline_count,unknown_count,latency_sum,latency_samples,min_latency_ms,max_latency_ms,created_at_ms,updated_at_ms)
     VALUES(?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?)
@@ -39,14 +39,16 @@ function createHealthRepository(db = defaultDb) {
   const resolveIncident = db.prepare(`UPDATE resource_health_incidents SET ended_at_ms=?,duration_ms=MAX(0,?-started_at_ms),
     status='resolved',updated_at_ms=? WHERE id=?`);
 
-  function record(item, result, checkedAtMs = Date.now()) {
+  function record(item, result, checkedAtMs = Date.now(), metadata = {}) {
     const latency = result.latencyMs == null ? null : Number(result.latencyMs);
     const counts = {
       online:result.status === 'online' ? 1 : 0,
       offline:result.status === 'offline' ? 1 : 0,
       unknown:result.status === 'unknown' ? 1 : 0,
     };
-    insertRaw.run(item.id,item.name,item.scope,item.owner_id || null,result.status,latency,checkedAtMs);
+    insertRaw.run(item.id,item.name,item.scope,item.owner_id || null,result.status,latency,
+      Number(metadata.checkIntervalMinutes || item.check_interval_minutes) || 5,
+      ['scheduled','manual','configuration'].includes(metadata.triggerType) ? metadata.triggerType : 'scheduled',checkedAtMs);
     upsertDaily.run(
       item.id,utcDay(checkedAtMs),item.name,item.url,item.scope,item.owner_id || null,
       counts.online,counts.offline,counts.unknown,latency == null ? 0 : latency,latency == null ? 0 : 1,
@@ -78,7 +80,8 @@ function createHealthRepository(db = defaultDb) {
   }
 
   function loadRaw(itemId, from, to) {
-    return db.prepare(`SELECT item_id itemId,status,latency_ms latencyMs,checked_at_ms checkedAtMs
+    return db.prepare(`SELECT item_id itemId,status,latency_ms latencyMs,checked_at_ms checkedAtMs,
+      check_interval_minutes checkIntervalMinutes,trigger_type triggerType
       FROM resource_health_events WHERE item_id=? AND checked_at_ms>=? AND checked_at_ms<? ORDER BY checked_at_ms`).all(itemId,from,to);
   }
 

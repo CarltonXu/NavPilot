@@ -105,11 +105,12 @@ AI_API_KEY=
 AI_MODEL=gpt-4o-mini
 
 AUTO_CHECK_ENABLED=true
-CHECK_INTERVAL_MINUTES=5
 CHECK_TIMEOUT_MS=5000
 HEALTH_RAW_RETENTION_DAYS=30
 HEALTH_MAINTENANCE_ENABLED=true
 ```
+
+可用性检测周期由每个资源独立配置，支持 5 分钟到 24 小时；服务端调度器每分钟扫描一次到期资源。
 
 AI 配置优先级为：**系统设置数据库覆盖 > 环境变量 > 内置默认值**。后台保存的 API Key 使用 AES-256-GCM 加密，主密钥首次运行时生成在数据目录 `.navpilot-secret`；也可以通过 `NAVPILOT_SECRET_KEY` 提供 32 字节 Base64 或 64 位十六进制密钥。数据库和主密钥必须分别备份，否则无法恢复模型密钥。
 

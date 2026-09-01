@@ -113,19 +113,95 @@ describe("AvailabilityTimeline", () => {
     expect(await screen.findByText("单日探测记录")).toBeTruthy();
     expect(screen.getAllByText("当日可用率").length).toBeGreaterThan(0);
     expect(screen.getAllByText("50%").length).toBeGreaterThan(0);
-    expect(document.querySelectorAll(".availability-heatmap-row")).toHaveLength(24);
-    expect(document.querySelectorAll(".availability-heatmap-slots")).toHaveLength(24);
-    expect(document.querySelectorAll(".availability-heatmap-cell")).toHaveLength(24 * 12);
+    expect(document.querySelector(".availability-fixed-day")).toBeTruthy();
+    expect(document.querySelectorAll(".availability-matrix-hour-head")).toHaveLength(24);
+    expect(document.querySelectorAll(".availability-probe-point")).toHaveLength(2);
+    expect(document.querySelectorAll(".availability-config-segment")).toHaveLength(1);
     expect(document.querySelector(".availability-hour-event-list")).toBeNull();
-    expect(document.querySelectorAll(".availability-heatmap-cell:not(.unknown)")).toHaveLength(2);
     expect(document.querySelector(".availability-hour-event-detail")).toBeNull();
-    const hourButton = document.querySelector(".availability-heatmap-hour:not(:disabled)");
+    const hourButton = [...document.querySelectorAll('.availability-matrix-hour-head')].find((button) => button.textContent.startsWith("10:00"));
+    const hourCard = hourButton.closest(".availability-matrix-hour");
     fireEvent.click(hourButton);
-    expect(document.querySelector(".availability-heatmap-row.active")).toBeTruthy();
+    expect(hourCard.classList.contains("active")).toBe(true);
     expect(document.querySelector(".availability-detail-columns header small").textContent).toContain("探测响应");
     fireEvent.click(hourButton);
-    expect(document.querySelector(".availability-heatmap-row.active")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name:"每日概览" }));
+    expect(hourCard.classList.contains("active")).toBe(false);
+    const overviewButton = [...document.querySelectorAll(".availability-history-actions button")].find((button) => button.textContent === "每日概览");
+    fireEvent.click(overviewButton);
     expect(screen.getByText("可用性历史")).toBeTruthy();
+  });
+
+  it("adapts the daily capsules to the interval stored with historical checks", async () => {
+    api.getItemAvailabilityDay.mockResolvedValueOnce({
+      ...dayAvailability,
+      checkIntervalMinutes:15,
+      events:[{status:"online",latencyMs:42,checkedAtMs:Date.parse("2026-07-11T10:15:00Z"),checkIntervalMinutes:15,triggerType:"scheduled"}],
+    });
+    render(<LocaleProvider><AvailabilityDetailModal item={{id:1,name:"GitLab",url:"https://gitlab.example"}} initialDate="2026-07-11" onClose={vi.fn()}/></LocaleProvider>);
+    await waitFor(() => expect(api.getItemAvailabilityDay).toHaveBeenCalled());
+    expect(document.querySelectorAll(".availability-probe-point.has-event")).toHaveLength(1);
+    expect(document.querySelector(".availability-config-segment").textContent).toContain("每 15 分钟");
+    expect(document.querySelector(".availability-probe-matrix").getAttribute("aria-label")).toBe("单日 24 小时探测矩阵");
+  });
+
+  it("uses a full-day timeline for multi-hour intervals", async () => {
+    api.getItemAvailabilityDay.mockResolvedValueOnce({
+      ...dayAvailability,
+      checkIntervalMinutes:480,
+      events:[{status:"online",latencyMs:42,checkedAtMs:Date.parse("2026-07-11T08:00:00Z"),checkIntervalMinutes:480,triggerType:"scheduled"}],
+    });
+    render(<LocaleProvider><AvailabilityDetailModal item={{id:1,name:"GitLab",url:"https://gitlab.example"}} initialDate="2026-07-11" onClose={vi.fn()}/></LocaleProvider>);
+    await waitFor(() => expect(api.getItemAvailabilityDay).toHaveBeenCalled());
+    expect(document.querySelector(".availability-fixed-day")).toBeTruthy();
+    expect(document.querySelector(".availability-config-segment").textContent).toContain("每 8 小时");
+    expect(document.querySelectorAll(".availability-probe-point.has-event")).toHaveLength(1);
+  });
+
+  it("keeps old and new check intervals as separate segments on the same day", async () => {
+    api.getItemAvailabilityDay.mockResolvedValueOnce({
+      ...dayAvailability,
+      checkIntervalMinutes:60,
+      checks:4,
+      events:[
+        {status:"online",latencyMs:40,checkedAtMs:Date.parse("2026-07-11T10:00:00Z"),checkIntervalMinutes:5,triggerType:"scheduled"},
+        {status:"online",latencyMs:41,checkedAtMs:Date.parse("2026-07-11T10:05:00Z"),checkIntervalMinutes:5,triggerType:"scheduled"},
+        {status:"online",latencyMs:42,checkedAtMs:Date.parse("2026-07-11T10:20:00Z"),checkIntervalMinutes:60,triggerType:"configuration"},
+        {status:"online",latencyMs:43,checkedAtMs:Date.parse("2026-07-11T11:20:00Z"),checkIntervalMinutes:60,triggerType:"scheduled"},
+      ],
+    });
+    render(<LocaleProvider><AvailabilityDetailModal item={{id:1,name:"GitLab",url:"https://gitlab.example"}} initialDate="2026-07-11" onClose={vi.fn()}/></LocaleProvider>);
+    await waitFor(() => expect(api.getItemAvailabilityDay).toHaveBeenCalled());
+    expect(screen.getByText("当天配置发生过变化，各阶段按生效时间独立展示")).toBeTruthy();
+    expect(document.querySelector(".availability-probe-matrix").getAttribute("aria-label")).toBe("单日 24 小时探测矩阵");
+    expect(document.querySelectorAll(".availability-probe-point.has-event")).toHaveLength(4);
+    expect(document.querySelector(".availability-long-period-history")).toBeNull();
+    expect(document.querySelector(".availability-fixed-day").textContent).toContain("每 5 分钟");
+    expect(document.querySelector(".availability-fixed-day").textContent).toContain("每 1 小时");
+  });
+
+  it("lays a full day of five-minute checks into non-overlapping fixed slots", async () => {
+    const from = Date.parse("2026-07-11T00:00:00Z");
+    api.getItemAvailabilityDay.mockResolvedValueOnce({
+      ...dayAvailability,
+      fromAtMs:from,
+      toAtMs:from + 24 * 60 * 60 * 1000,
+      checkIntervalMinutes:5,
+      checks:288,
+      events:Array.from({length:288},(_,index) => ({
+        status:"online",
+        latencyMs:40 + index % 10,
+        checkedAtMs:from + index * 5 * 60000,
+        checkIntervalMinutes:5,
+        triggerType:"scheduled",
+      })),
+    });
+    render(<LocaleProvider><AvailabilityDetailModal item={{id:1,name:"GitLab",url:"https://gitlab.example"}} initialDate="2026-07-11" onClose={vi.fn()}/></LocaleProvider>);
+    await waitFor(() => expect(api.getItemAvailabilityDay).toHaveBeenCalled());
+    const scheduled = document.querySelector(".availability-probe-matrix");
+    const points = [...scheduled.querySelectorAll(".availability-matrix-point")];
+    expect(points).toHaveLength(288);
+    expect(document.querySelectorAll(".availability-matrix-hour")).toHaveLength(24);
+    expect(document.querySelectorAll(".availability-matrix-slots")).toHaveLength(24);
+    expect(points.every((point) => point.style.gridColumn === "")).toBe(true);
   });
 });

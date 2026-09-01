@@ -103,6 +103,8 @@ function BatchMoveBar({
   onShare,
   onAi,
   onAccess,
+  onMonitoring,
+  monitoringBusy,
   moving,
   deleting,
   recognizing,
@@ -111,6 +113,7 @@ function BatchMoveBar({
   onShowRecognitionResult,
 }) {
   const { t, locale } = useI18n();
+  const [monitoringInterval,setMonitoringInterval] = useState(5);
   return (
     <div className="batch-move-bar">
       <span>{t("batch.selected", { count: selectedCount })}</span>
@@ -192,6 +195,7 @@ function BatchMoveBar({
           )}
           {onAi&&<button className="icon-btn" disabled={deleting||recognizing} onClick={onAi}><Icon name="assistant" size={14}/>{locale==='en'?'Ask AI':'交给 AI'}</button>}
           {onAccess&&<button className="icon-btn" disabled={deleting||recognizing} onClick={onAccess}><Icon name="shield" size={14}/>{locale==='en'?'Access':'授权'}</button>}
+          {onMonitoring&&<div className="batch-monitoring-controls"><button className="icon-btn" disabled={monitoringBusy||deleting||recognizing} onClick={()=>onMonitoring('enable')}><Icon name="monitor" size={14}/>{locale==='en'?'Enable checks':'开启检测'}</button><button className="icon-btn" disabled={monitoringBusy||deleting||recognizing} onClick={()=>onMonitoring('disable')}><Icon name="minus" size={14}/>{locale==='en'?'Disable checks':'关闭检测'}</button><select value={monitoringInterval} disabled={monitoringBusy||deleting||recognizing} onChange={event=>setMonitoringInterval(Number(event.target.value))}>{[5,10,15,30,60,120,300,480,720,1440].map(value=><option value={value} key={value}>{value<60?`${value}${locale==='en'?' min':' 分钟'}`:`${value/60}${locale==='en'?' hr':' 小时'}`}</option>)}</select><button className="icon-btn" disabled={monitoringBusy||deleting||recognizing} onClick={()=>onMonitoring('interval',monitoringInterval)}><Icon name={monitoringBusy?'refresh':'clock'} size={14}/>{locale==='en'?'Set interval':'设置周期'}</button></div>}
           <button
             className="icon-btn batch-delete-btn"
             disabled={moving || deleting || recognizing}
@@ -285,6 +289,7 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
     [moving, setMoving] = useState(false),
     [deleting, setDeleting] = useState(false),
     [recognizing, setRecognizing] = useState(false),
+    [monitoringBulkBusy, setMonitoringBulkBusy] = useState(false),
     [recognitionProgress, setRecognitionProgress] = useState(null),
     [recognitionResult, setRecognitionResult] = useState(null),
     [showRecognitionResult, setShowRecognitionResult] = useState(false),
@@ -823,6 +828,18 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
       setMoving(false);
     }
   }
+  async function configureSelectedMonitoring(mode, intervalMinutes = null) {
+    const ids = [...selectedIds];
+    if (!canManage || !ids.length || monitoringBulkBusy) return;
+    setMonitoringBulkBusy(true); setError("");
+    try {
+      const patch = mode === "enable" ? { check_enabled:true } : mode === "disable" ? { check_enabled:false } : { check_interval_minutes:intervalMinutes };
+      await api.bulkUpdateItems(space,ids,patch);
+      toastMessage(locale === "en" ? `${ids.length} monitoring settings updated` : `已更新 ${ids.length} 个资源的探测设置`);
+      await load();
+    } catch (cause) { setError(errorMessage(cause)); }
+    finally { setMonitoringBulkBusy(false); }
+  }
   async function recognizeSelectedItems() {
     const ids = [...selectedIds];
     if (!canManage || !ids.length || moving || deleting || recognizing) return;
@@ -1253,6 +1270,8 @@ function PortalWorkspace({ theme, onThemeChange, branding, publicSettings }) {
             }}
             onAi={()=>{const names=items.filter(item=>selectedIds.has(item.id)).slice(0,30).map(item=>`「${item.name}」`).join('、');setAssistantRequest({id:Date.now(),scope:space,text:locale==='en'?`Analyze these selected resources and prepare an approval plan to categorize, tag, or improve them: ${names}`:`请分析我选中的这些资源，并生成分类、打标签或完善信息的待授权方案：${names}`,context:assistantContext});}}
             onAccess={space==='public'?()=>setBulkAccessOpen(true):null}
+            onMonitoring={configureSelectedMonitoring}
+            monitoringBusy={monitoringBulkBusy}
             onMove={() =>
               moveItems(
                 [...selectedIds],

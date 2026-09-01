@@ -26,6 +26,7 @@ export default function ItemFormModal({
     category_id: item?.category_id ?? "",
     check_method: item?.check_method || "http",
     check_target: item?.check_target || "",
+    check_interval_minutes: Number(item?.check_interval_minutes || item?.checkIntervalMinutes) || 5,
   });
   const [error, setError] = useState("");
   const [access,setAccess]=useState(isEdit?{visibility:item?.visibility||'public',grants:[]}:{inherit:true,visibility:'public',grants:[]});
@@ -307,18 +308,23 @@ export default function ItemFormModal({
             </div>
           </div>
           {form.check_method !== "none" && (
-            <div className="form-row">
-              <label>{t("item.checkTarget")}</label>
-              <input
-                value={form.check_target}
-                onChange={(e) => update("check_target", e.target.value)}
-                placeholder={
-                  form.check_method === "tcp"
-                    ? t("item.tcpPlaceholder")
-                    : "https://example.com/health"
-                }
-              />
-              <div className="hint">{t("item.checkHint")}</div>
+            <div className="form-grid-2 monitoring-config-grid">
+              <div className="form-row">
+                <label>{t("item.checkTarget")}</label>
+                <input
+                  value={form.check_target}
+                  onChange={(e) => update("check_target", e.target.value)}
+                  placeholder={form.check_method === "tcp" ? t("item.tcpPlaceholder") : "https://example.com/health"}
+                />
+                <div className="hint">{t("item.checkHint")}</div>
+              </div>
+              <div className="form-row">
+                <label>{locale === "en" ? "Check interval" : "检测周期"}</label>
+                <select value={form.check_interval_minutes} onChange={(event) => update("check_interval_minutes",Number(event.target.value))}>
+                  {[[5,"5 分钟","5 minutes"],[10,"10 分钟","10 minutes"],[15,"15 分钟","15 minutes"],[30,"30 分钟","30 minutes"],[60,"1 小时","1 hour"],[120,"2 小时","2 hours"],[300,"5 小时","5 hours"],[480,"8 小时","8 hours"],[720,"12 小时","12 hours"],[1440,"24 小时","24 hours"]].map(([value,cn,en]) => <option value={value} key={value}>{locale === "en" ? en : cn}</option>)}
+                </select>
+                <div className="hint">{locale === "en" ? "Long intervals reduce traffic but delay outage detection." : "周期越长，请求越少，但发现故障也会更慢。"}</div>
+              </div>
             </div>
           )}
           </section>

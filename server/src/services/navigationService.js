@@ -1,7 +1,14 @@
 const crypto = require("crypto");
 const defaultDb = require("../db");
+const { recordMonitoringConfig } = require("./monitoringConfigHistory");
 
-const selectItem = `SELECT items.id,items.name,items.url,items.icon,items.description,items.ai_summary,items.content_hash,items.content_analyzed_at_ms,items.tags_json,items.category_id,items.sort_order,items.click_count,items.status,items.latency_ms,items.last_checked_at,items.check_enabled,items.check_method,items.check_target,items.scope,items.owner_id,items.visibility,items.version,items.created_at,items.updated_at,categories.name AS category_name,categories.icon AS category_icon FROM items LEFT JOIN categories ON categories.id=items.category_id`;
+const selectItem = `SELECT items.id,items.name,items.url,items.icon,items.description,items.ai_summary,items.content_hash,items.content_analyzed_at_ms,items.tags_json,items.category_id,items.sort_order,items.click_count,items.status,items.latency_ms,items.last_checked_at,items.check_enabled,items.check_method,items.check_target,items.check_interval_minutes,items.next_check_at_ms,items.scope,items.owner_id,items.visibility,items.version,items.created_at,items.updated_at,categories.name AS category_name,categories.icon AS category_icon FROM items LEFT JOIN categories ON categories.id=items.category_id`;
+const CHECK_INTERVALS = new Set([5,10,15,30,60,120,300,480,720,1440]);
+function checkInterval(value, fallback = 5) {
+  const normalized = Number(value ?? fallback);
+  if (!CHECK_INTERVALS.has(normalized)) throw domainError('CHECK_INTERVAL_INVALID', '检测周期无效');
+  return normalized;
+}
 const selectCategory =
   "SELECT id,name,icon,scope,owner_id,parent_id,sort_order,version,default_visibility,created_at,updated_at FROM categories";
 
@@ -89,6 +96,8 @@ function itemSnapshot(value) {
     checkMethod: value.check_method,
     checkTarget: value.check_target,
     checkEnabled: Boolean(value.check_enabled),
+    checkIntervalMinutes: value.check_interval_minutes,
+    nextCheckAtMs: value.next_check_at_ms,
     scope: value.scope,
     status: value.status,
     version: value.version,
@@ -451,6 +460,9 @@ function createNavigationService(db = defaultDb) {
             ? "none"
             : "http";
     const checkEnabled = method !== "none";
+    const interval = checkInterval(input.check_interval_minutes);
+    const effectiveAtMs = Date.now();
+    const nextCheckAtMs = checkEnabled ? effectiveAtMs + interval * 60000 : null;
     const max = db
       .prepare(
         "SELECT COALESCE(MAX(sort_order),-1) max FROM items WHERE scope=? AND owner_id IS ? AND category_id IS ?",
@@ -459,7 +471,7 @@ function createNavigationService(db = defaultDb) {
     const id = Number(
       db
         .prepare(
-          `INSERT INTO items(name,url,icon,description,tags_json,category_id,sort_order,check_method,check_target,check_enabled,scope,owner_id,version,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,datetime('now'))`,
+          `INSERT INTO items(name,url,icon,description,tags_json,category_id,sort_order,check_method,check_target,check_enabled,check_interval_minutes,next_check_at_ms,scope,owner_id,version,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,datetime('now'))`,
         )
         .run(
           name,
@@ -472,11 +484,14 @@ function createNavigationService(db = defaultDb) {
           method,
           input.check_target || null,
           checkEnabled ? 1 : 0,
+          interval,
+          nextCheckAtMs,
           current.scope,
           current.ownerId,
         ).lastInsertRowid,
     );
     const value = getItem(db, current, id);
+    recordMonitoringConfig(db,value,{ effectiveAtMs,source:'created' });
     return {
       value,
       before: null,
@@ -507,11 +522,17 @@ function createNavigationService(db = defaultDb) {
         : "none";
     }
     const checkEnabled = method !== "none";
+    const interval = checkInterval(patch.check_interval_minutes, beforeValue.check_interval_minutes);
+    const nextTarget = patch.check_target === undefined ? beforeValue.check_target : patch.check_target;
+    const nextUrl = normalizeUrl(patch.url ?? beforeValue.url);
+    const scheduleChanged = interval !== Number(beforeValue.check_interval_minutes) || checkEnabled !== Boolean(beforeValue.check_enabled) || method !== beforeValue.check_method || nextTarget !== beforeValue.check_target || nextUrl !== beforeValue.url;
+    const effectiveAtMs = Date.now();
+    const nextCheckAtMs = !checkEnabled ? null : scheduleChanged ? effectiveAtMs + interval * 60000 : beforeValue.next_check_at_ms;
     db.prepare(
-      `UPDATE items SET name=?,url=?,icon=?,description=?,tags_json=?,category_id=?,check_method=?,check_target=?,check_enabled=?,version=version+1,updated_at=datetime('now') WHERE id=?`,
+      `UPDATE items SET name=?,url=?,icon=?,description=?,tags_json=?,category_id=?,check_method=?,check_target=?,check_enabled=?,check_interval_minutes=?,next_check_at_ms=?,version=version+1,updated_at=datetime('now') WHERE id=?`,
     ).run(
       String(patch.name ?? beforeValue.name).trim(),
-      normalizeUrl(patch.url ?? beforeValue.url),
+      nextUrl,
       String(patch.icon ?? beforeValue.icon).slice(0, 500),
       String(patch.description ?? beforeValue.description).slice(0, 500),
       JSON.stringify(
@@ -519,10 +540,10 @@ function createNavigationService(db = defaultDb) {
       ),
       nextCategoryId,
       method,
-      patch.check_target === undefined
-        ? beforeValue.check_target
-        : patch.check_target,
+      nextTarget,
       checkEnabled ? 1 : 0,
+      interval,
+      nextCheckAtMs,
       beforeValue.id,
     );
     if (moved) {
@@ -544,6 +565,7 @@ function createNavigationService(db = defaultDb) {
     const value = getItem(db, current, id),
       before = itemSnapshot(beforeValue),
       after = itemSnapshot(value);
+    if (scheduleChanged) recordMonitoringConfig(db,value,{ effectiveAtMs,source:'updated' });
     return {
       value,
       before,
