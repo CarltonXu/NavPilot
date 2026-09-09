@@ -371,4 +371,3 @@ SQLite 升级前应先停止 App/Worker 并归档 `server/data/navpilot.db`。�
 - 离线状态变化时接入企业微信 / 钉钉 webhook 告警
 - 探测失败重试机制（当前一次超时/失败即判定离线，容易受网络抖动影响误报）
 - 个人空间"收藏公共空间条目"能力（目前个人空间与公共空间是完全独立的两份数据）
->>>>>>> 38632c6 (feat: initialize NavPilot application)
